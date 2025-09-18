@@ -1,4 +1,4 @@
--------------------- CS -------------------- <br>
+-------------------- CZ -------------------- <br>
 Toto rozšíření bylo vytvářeno pro chromium.<br>
 Funguje na stránkách <b>e621.net</b> a <b>e6ai.net</b>.<br>
 Cílem rozšíření je v první řadě zajištění možnosti hromadného otevírání zvoleného počtu postů na stránce.
