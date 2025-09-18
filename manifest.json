@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Posts Opener + Toolbar v6.2.1",
+  "version": "6.2.1",
+  "description": "Otevírání/stahování ze stránek s cestou /posts*. CZ/EN UI, delay/limit, volba složky (FS API) + fallback do Stažené, spodní fixní lišta.",
+  "permissions": ["downloads", "storage"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["*://*/*"],
+      "include_globs": ["*/posts*", "*/posts/*"],
+      "js": [
+        "content/e6-post-opener.js",
+        "content/e6-post-toolbar.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "icons/16.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  }
+}
