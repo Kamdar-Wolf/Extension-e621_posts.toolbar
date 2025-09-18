@@ -3,8 +3,6 @@ Toto rozšíření bylo vytvářeno pro chromium.<br>
 Funguje na stránkách <b>e621.net</b> a <b>e6ai.net</b>.<br>
 Cílem rozšíření je v první řadě zajištění možnosti hromadného otevírání zvoleného počtu postů na stránce.
 <br><br>
-Můžete stáhnout všechny soubory jednotlivě, a načíst je jako nerozbalené rozšíření, nebo stáhnout jen soubor ZIP, rozbalit jej, a opět načíst nerozbalené. 
-<br><br>
 <b><u>Funkce:</u></b>
 <ul>
   <li>Jazyk - čeština nebo angličtina</li>
@@ -31,8 +29,6 @@ Pod obrázkem je plovoucí Toolbar zarovnaný na střed.
 This extension has been created for chromium.<br>
 It works on <b>e621.net</b> and <b>e6ai.net</b>.<br>
 The main goal of this extension is to provide the ability to open a selected number of posts on a page in bulk.
-<br><br>
-You can download all the files individually, and load them as unzipped extensions, or download just the ZIP file, unzip it, and load it again unzipped. 
 <br><br>
 <b><u>Features: </u></b>
 <ul>
