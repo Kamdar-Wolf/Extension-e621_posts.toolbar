@@ -1,4 +1,4 @@
--------------------- CZ -------------------- <br>
+-------------------- CZ --------------------<br>
 Toto rozšíření bylo vytvářeno pro chromium.<br>
 Funguje na stránkách <b>e621.net</b> a <b>e6ai.net</b>.<br>
 Cílem rozšíření je v první řadě zajištění možnosti hromadného otevírání zvoleného počtu postů na stránce.
@@ -25,7 +25,7 @@ SFW režim - při stisknutí klávesy <b>&bsol;</b> nebo ikony 🛡️se vešker
 Všechny posty jsou zarovnány na střed tak, aby byl vždy vidět celý obrázek (i když je větší, než je stránka).<br>
 Pod obrázkem je plovoucí Toolbar zarovnaný na střed.
 <br><br><br><br>
--------------------- EN -------------------- <br>
+-------------------- EN --------------------<br>
 This extension has been created for chromium.<br>
 It works on <b>e621.net</b> and <b>e6ai.net</b>.<br>
 The main goal of this extension is to provide the ability to open a selected number of posts on a page in bulk.
