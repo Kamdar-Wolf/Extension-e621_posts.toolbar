@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Posts Opener + Toolbar v6.2.1",
   "version": "6.2.1",
-  "description": "Otevírání/stahování ze stránek s cestou /posts*. CZ/EN UI, delay/limit, volba složky (FS API) + fallback do Stažené, spodní fixní lišta.",
+  "description": "Otevírání/stahování ze stránek s cestou /posts*, zarovnání obrázků a plovoucí toolbar; volba složky (FS API) + fallback do Stažené, spodní fixní lišta.",
   "permissions": ["downloads", "storage"],
   "background": { "service_worker": "background.js" },
   "content_scripts": [
