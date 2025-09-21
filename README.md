@@ -1,11 +1,6 @@
-<a id="top"></a>
-<p align="right">
-  <a href="#cz">🇨🇿 Čeština</a> · <a href="#en">🇬🇧 English</a>
-</p>
-
 <a id="cz"></a>
-<details open>
-  <summary><b>🇨🇿 Čeština</b></summary>
+<details>
+  <summary><b>🇨🇿 Čeština - popis a návod k instalaci</b></summary>
   -------------------- CZ --------------------<br>
 Toto rozšíření bylo vytvářeno pro chromium.<br>
 Funguje na stránkách <b>e621.net</b> a <b>e6ai.net</b>.<br>
@@ -33,12 +28,11 @@ SFW režim - při stisknutí klávesy <b>&bsol;</b> nebo ikony 🛡️se vešker
 Všechny posty jsou zarovnány na střed tak, aby byl vždy vidět celý obrázek (i když je větší, než je stránka).<br>
 Pod obrázkem je plovoucí Toolbar zarovnaný na střed.
 <br><br><br><br>
-<p align="right">↩︎ <a href="#top">nahoru</a> · <a href="#en">English</a></p>
 </details>
 
 <a id="en"></a>
 <details>
-  <summary><b>🇬🇧 English</b></summary>
+  <summary><b>🇬🇧 English - description and installation instructions</b></summary>
 -------------------- EN --------------------<br>
 This extension has been created for chromium.<br>
 It works on <b>e621.net</b> and <b>e6ai.net</b>.<br>
@@ -65,5 +59,4 @@ SFW mode - when you press <b>&bsol;</b> or 🛡️se icon, all images on that pa
 <b>Posts and Toolbar:</b><br>
 All posts are center-aligned so that the entire image is always visible (even if it is larger than the page).<br>
 Below the image is a floating Toolbar center-aligned.
-<p align="right">↩︎ <a href="#top">Back to top</a> · <a href="#cz">Čeština</a></p>
 </details>
