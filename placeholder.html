@@ -1,13 +1,13 @@
 <!doctype html>
-<html lang="en">
+<html lang="cs">
 <head>
   <meta charset="utf-8">
-  <title>Loading…</title>
+  <title>Připravuji…</title>
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <style>
     html,body{height:100%;margin:0;font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;background:#0b0b0b;color:#ddd}
     .wrap{height:100%;display:flex;align-items:center;justify-content:center;text-align:center;padding:20px}
-    .card{border:1px solid #444;border-radius:12px;padding:20px 24px;max-width:560px;background:#141414;box-shadow:0 0 0 1px #000 inset}
+    .card{border:1px solid #444;border-radius:12px;padding:20px;max-width:560px;background:#141414;box-shadow:0 0 0 1px #000 inset}
     .big{font-size:28px;margin:0 0 8px}
     .small{opacity:.85;margin:8px 0 0}
     a{color:#9bd7ff;text-decoration:none}
@@ -19,13 +19,13 @@
 <body>
   <div class="wrap">
     <div class="card">
-      <div class="big" id="title">Preparing…</div>
+      <div class="big" id="title">Připravuji…</div>
       <div class="small">
-        <span id="count">00</span> s
+        <span id="count">00</span> <span id="secUnit">s</span>
         &nbsp;•&nbsp;<span id="idx">0</span>/<span id="total">0</span>
       </div>
-      <p class="small muted">Click to open immediately, or press <span class="kbd">Enter</span>.</p>
-      <p class="small"><a id="link" href="#" rel="noreferrer noopener">Open now</a></p>
+      <p class="small muted" id="hint">Klikni pro okamžité otevření, nebo stiskni <span class="kbd">Enter</span>.</p>
+      <p class="small"><a id="link" href="#" rel="noreferrer noopener">Otevřít hned</a></p>
     </div>
   </div>
   <script src="placeholder.js"></script>
