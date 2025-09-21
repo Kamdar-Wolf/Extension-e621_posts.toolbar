@@ -172,7 +172,8 @@
       }
     };
     const t = (key, ...args) => (typeof TXT[lang][key] === 'function' ? TXT[lang][key](...args) : TXT[lang][key]);
-    const titleForView = () => (viewMode === 'open' ? t('titleOpen') : t('titleDownload'));
+    const titleForView = () => (viewMode === 'open' ? t('titleOpen') : t('titleDownload')) ;
+
 
     // ---------- SHARED STATE ----------
     const STATE_KEY = 'kd_safe_status';
