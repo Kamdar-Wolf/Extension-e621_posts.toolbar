@@ -14,122 +14,193 @@
       const {oldValue,newValue}=ch[k]; __cache[k]=newValue; try{ cb(k, oldValue, newValue); } catch{} }); }catch{}
   }
   function GM_openInTab(url, opts){
-    try{
-      chrome.runtime.sendMessage({type:'openInBackground', url}, (res)=>{ /* ignore */ });
-    }catch{}
-    try{ window.open(url, '_blank', 'noopener'); }catch{}
+    try{ chrome.runtime.sendMessage({type:'openInBackground', url, options:opts||{}}, ()=>{}); }
+    catch{ try{ window.open(url,'_blank','noopener'); }catch{} }
+  }
+  function GM_download(opts){
+    const { url, name, onload, onerror } = (typeof opts==='string') ? {url:opts} : opts;
+    chrome.runtime.sendMessage({ type:'download', url, filename:name }, (res)=>{
+      const e = chrome.runtime.lastError;
+      if (e) return onerror && onerror(e);
+      if (!res?.ok) return onerror && onerror(new Error(res?.error||'download failed'));
+      onload && onload(res);
+    });
   }
 
-  // ===== Helpers =====
-  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-  const byId = (id) => document.getElementById(id);
-  const fmtSec = s => (s<60?`${s|0}s`:`${(s/60)|0}m ${(s%60)|0}s`);
+  __onReady(function init(){
+    if (!/^\/posts(\/|\?|$)/.test(location.pathname)) return;
+    if (!document.querySelector('article.thumbnail')) return;
 
-  // ===== Konstanty a texty =====
-  const HARD_CAP = 250;
-  const UI_WIDTH = '215px';
-  const HIDDEN_CLASS = 'kd-hidden';
+    // ---------- KONSTANTY/UI ----------
+    const SELECTOR_CARD = 'article.thumbnail';
+    const ATTR_FILE_URL = 'data-file-url';
+    const hasGrid = !!document.querySelector(SELECTOR_CARD);
 
-  const TXT = {
-    cs: {
-      langToggle: 'Přepnout jazyk',
-      titleOpen: 'Otevřít',
-      titleDownload: 'Stáhnout',
-      gear: 'Sbalit/rozbalit nastavení',
-      gearExpand: 'Rozbalit nastavení',
-      gearCollapse: 'Sbalit nastavení',
-      minimize: 'Minimalizovat',
-      close: 'Zavřít',
-      sfw: 'Přepnout SFW (\\)',
-      viewOpen: 'Přepnout na Stahování',
-      viewDownload: 'Přepnout na Otevírání',
-      modeLabel: 'Režim',
-      modePost: 'post (stránka příspěvku)',
-      modeFile: 'file (plný soubor)',
-      delayLabelOpen: 'Prodleva mezi otvíráním (ms)',
-      delayLabelDownload: 'Prodleva mezi stahováním (ms)',
-      limitLabelOpen:  `Počet k otevření (max ${HARD_CAP})`,
-      limitLabelDownload: `Počet stažení (max ${HARD_CAP})`,
-      destLabel: 'Cílová složka',
-      chooseFolder: 'ZVOLIT SLOŽKU',
-      folderDefault: 'Stažené soubory (výchozí)',
-      folderChosen: (name) => `Složka: ${name}`,
-      startOpen: 'Start',
-      startDownload: 'Stáhnout',
-      pause: 'Pozastavit',
-      resume: 'Pokračovat',
-      stop: 'Stop',
-      ready: 'Připraveno.',
-      running: 'Běží…',
-      paused: 'Pozastaveno',
-      done: 'Hotovo ✔',
-      nothing: 'Nic k otevření',
-      noGallery: 'Na této stránce není galerie / grid.',
-      eta: 'ETA',
-      fsCancel: 'Výběr složky zrušen nebo selhal. Použiji výchozí „Stažené soubory“.'
-    },
-    en: {
-      langToggle: 'Toggle language',
-      titleOpen: 'Open',
-      titleDownload: 'Download',
-      gear: 'Collapse/expand settings',
-      gearExpand: 'Expand settings',
-      gearCollapse: 'Collapse settings',
-      minimize: 'Minimize',
-      close: 'Close',
-      sfw: 'Toggle SFW (\\)',
-      viewOpen: 'Switch to Download',
-      viewDownload: 'Switch to Open',
-      modeLabel: 'Mode',
-      modePost: 'post (post page)',
-      modeFile: 'file (full file)',
-      delayLabelOpen: 'Delay between opens (ms)',
-      delayLabelDownload: 'Delay between downloads (ms)',
-      limitLabelOpen:  `Number to open (max ${HARD_CAP})`,
-      limitLabelDownload: `Number to download (max ${HARD_CAP})`,
-      destLabel: 'Destination',
-      chooseFolder: 'CHOOSE FOLDER',
-      folderDefault: 'Downloads (default)',
-      folderChosen: (name) => `Folder: ${name}`,
-      startOpen: 'Start',
-      startDownload: 'Download',
-      pause: 'Pause',
-      resume: 'Resume',
-      stop: 'Stop',
-      ready: 'Ready.',
-      running: 'Running…',
-      paused: 'Paused',
-      done: 'Done ✔',
-      nothing: 'Nothing to open',
-      noGallery: 'No grid/gallery on this page.',
-      eta: 'ETA',
-      fsCancel: 'Folder selection cancelled or failed. Falling back to Downloads.'
-    }
-  };
+    const DEFAULT_LIMIT = 250;
+    const HARD_CAP = 250;
 
-  // ===== Stav (sdílený přes storage) =====
-  const STATE_KEY = 'kd_shared_state';
-  const LANG_KEY  = 'kd_lang';
-  const GM_Get    = GM_getValue;
-  const GM_Set    = GM_setValue;
+    const UI_BORDER = '#ffee95';
+    const UI_WIDTH  = '215px';
+    const FONT_STACK = 'Verdana, system-ui, Segoe UI, Roboto, Arial, sans-serif';
 
-  __onReady(async () => {
-    let lang = (GM_Get(LANG_KEY) || 'cs');
-    if (lang !== 'cs' && lang !== 'en') lang = 'cs';
+    // ---------- STAV ----------
+    let delayMs = 1500;
+    let modeVal  = 'post';                      // pro OTEVÍRÁNÍ: 'post' | 'file'
+    let viewMode = (GM_getValue('kd_view_mode') || 'open'); // 'open' | 'download'
+    let running = false, paused = false, timer = null;
+    let urls = []; let idx = 0;
 
-    const t = (k, ...a) => {
-      const v = TXT[lang][k];
-      return (typeof v === 'function') ? v(...a) : v;
+    // DOWNLOAD
+    let dirHandle = null;  // File System Access API directory handle (volitelné)
+    let activeAbort = null;
+    let lastChosenDirName = '';
+
+    // Nastavení UI
+    let settingsCollapsed = true;
+    const HIDDEN_CLASS = 'kd-hidden';
+
+    // ----- BURST settings -----
+    const BURST_MODE_KEY = 'kd_burst_mode';     // '0' | '1'
+    const BURST_STEP_KEY = 'kd_burst_step_ms';  // number (ms)
+    let burstMode  = (GM_getValue(BURST_MODE_KEY) === '1'); // default off
+    let burstStepMs = Math.max(200, parseInt(GM_getValue(BURST_STEP_KEY) || '1500', 10));
+
+    // ---------- I18N ----------
+    const LANG_KEY = 'kd_lang';
+    let lang = (GM_getValue(LANG_KEY) || 'cs'); // 'cs' | 'en'
+
+    const TXT = {
+      cs: {
+        titleOpen: 'Otevřít',
+        titleDownload: 'Stáhnout',
+        gear: 'Sbalit/rozbalit nastavení',
+        gearExpand: 'Rozbalit nastavení',
+        gearCollapse: 'Sbalit nastavení',
+        minimize: 'Minimalizovat',
+        close: 'Zavřít',
+        sfw: 'Přepnout SFW (\\)',
+        viewOpen: 'Přepnout na stahování',
+        viewDownload: 'Přepnout na otevírání',
+        modeLabel: 'Režim',
+        modePost: 'post (stránka příspěvku)',
+        modeFile: 'file (plný soubor)',
+        delayLabelOpen: 'Prodleva mezi otevřeními (ms)',
+        delayLabelDownload: 'Prodleva mezi staženími (ms)',
+        limitLabelOpen:  `Počet otevření (max ${HARD_CAP})`,
+        limitLabelDownload: `Počet stažení (max ${HARD_CAP})`,
+        destLabel: 'Cílová složka',
+        chooseFolder: 'ZVOLIT SLOŽKU',
+        folderDefault: 'Stažené soubory (výchozí)',
+        folderChosen: (name) => `Složka: ${name}`,
+        startOpen: 'Start',
+        startDownload: 'Stáhnout',
+        pause: 'Pozastavit',
+        resume: 'Pokračovat',
+        stop: 'Stop',
+        ready: 'Připraveno.',
+        running: 'Běží…',
+        paused: 'Pozastaveno',
+        done: 'Hotovo ✔',
+        nothing: 'Nic k otevření/stahování.',
+        next: 'Next',
+        eta: 'ETA',
+        noGallery: 'Na téhle stránce není galerie.',
+        statusOpen: (o,t,l) => `Otevřeno: ${o}/${t} | Zbývá: ${l}`,
+        statusDownload: (o,t,l) => `Staženo: ${o}/${t} | Zbývá: ${l}`,
+        langToggle: 'Přepnout jazyk CZ/EN',
+        noFS: 'Prohlížeč nedovolil přímý výběr složky. Použiji výchozí „Stažené soubory“.',
+        fsDenied: 'Oprávnění k zápisu odepřeno. Použiji výchozí „Stažené soubory“.',
+        fsCancel: 'Výběr složky zrušen nebo selhal. Použiji výchozí „Stažené soubory“.',
+        dlError: 'Chyba stahování',
+        runningElsewhere: 'Probíhá jinde',
+
+        // --- nové pro Burst ---
+        burstStyle: 'Styl otevírání',
+        burstOff: 'Sekvenčně',
+        burstOn: 'Hromadně',
+        burstStep: 'Odpočet mezi kartami (ms)'
+      },
+      en: {
+        titleOpen: 'Open',
+        titleDownload: 'Download',
+        gear: 'Collapse/expand settings',
+        gearExpand: 'Expand settings',
+        gearCollapse: 'Collapse settings',
+        minimize: 'Minimize',
+        close: 'Close',
+        sfw: 'Toggle SFW (\\)',
+        viewOpen: 'Switch to Download',
+        viewDownload: 'Switch to Open',
+        modeLabel: 'Mode',
+        modePost: 'post (post page)',
+        modeFile: 'file (full file)',
+        delayLabelOpen: 'Delay between opens (ms)',
+        delayLabelDownload: 'Delay between downloads (ms)',
+        limitLabelOpen:  `Number to open (max ${HARD_CAP})`,
+        limitLabelDownload: `Number to download (max ${HARD_CAP})`,
+        destLabel: 'Target folder',
+        chooseFolder: 'CHOOSE FOLDER',
+        folderDefault: 'Downloads (default)',
+        folderChosen: (name) => `Folder: ${name}`,
+        startOpen: 'Start',
+        startDownload: 'Download',
+        pause: 'Pause',
+        resume: 'Resume',
+        stop: 'Stop',
+        ready: 'Ready.',
+        running: 'Running…',
+        paused: 'Paused',
+        done: 'Done ✔',
+        nothing: 'Nothing to open/download.',
+        next: 'Next',
+        eta: 'ETA',
+        noGallery: 'No gallery on this page.',
+        statusOpen: (o,t,l) => `Opened: ${o}/${t} | Left: ${l}`,
+        statusDownload: (o,t,l) => `Downloaded: ${o}/${t} | Left: ${l}`,
+        langToggle: 'Toggle language CZ/EN',
+        noFS: 'Browser did not allow direct folder selection. Using default Downloads.',
+        fsDenied: 'Write permission denied. Using default Downloads.',
+        fsCancel: 'Folder selection canceled/failed. Using default Downloads.',
+        dlError: 'Download error',
+        runningElsewhere: 'Running elsewhere',
+
+        // --- new for Burst ---
+        burstStyle: 'Opening style',
+        burstOff: 'Sequential',
+        burstOn: 'All at once with countdown',
+        burstStep: 'Countdown between tabs (ms)'
+      }
     };
+    const t = (key, ...args) => (typeof TXT[lang][key] === 'function' ? TXT[lang][key](...args) : TXT[lang][key]);
+    const titleForView = () => (viewMode === 'open' ? t('titleOpen') : t('titleDownload'));
+
+    // ---------- SHARED STATE ----------
+    const STATE_KEY = 'kd_safe_status';
+    const GM_Get = (k) => { try { return GM_getValue(k); } catch { return null; } };
+    const GM_Set = (k,v) => { try { GM_setValue(k,v); } catch {} };
+
+    function readShared() { try { const raw = GM_Get(STATE_KEY); return raw ? JSON.parse(raw) : {}; } catch { return {}; } }
+    function writeShared(obj){ try { GM_Set(STATE_KEY, JSON.stringify(obj || {})); } catch {} }
+
+    let shared = readShared();
+    function publishLocalStatus(noteOverride) {
+      const total = urls.length;
+      const opened = Math.min(idx, total);
+      writeShared({
+        running, total, opened, delayMs, viewMode,
+        startedAt: shared.startedAt || (running ? Date.now() : null),
+        lastTick: Date.now(),
+        note: (noteOverride != null)
+          ? noteOverride
+          : (running ? (paused ? t('paused') : t('running')) : (opened===total && total>0 ? t('done') : t('ready'))),
+      });
+    }
 
     // ---------- SFW ----------
     const isGallery = /^\/posts(\?|$)/.test(location.pathname + location.search);
     const SFW_KEY = isGallery ? 'kd_sfw_mode_gallery' : 'kd_sfw_mode_post';
     const sfwEnabled = () => localStorage.getItem(SFW_KEY) === '1';
-    function setSfw(on){
-      if (on) localStorage.setItem(SFW_KEY,'1'); else localStorage.removeItem(SFW_KEY);
-      document.documentElement.classList.toggle('kd-sfw', on);
-    }
+    function setSfw(on){ if (on) localStorage.setItem(SFW_KEY,'1'); else localStorage.removeItem(SFW_KEY); document.documentElement.classList.toggle('kd-sfw', on); }
     const style = document.createElement('style');
     style.textContent = `
       .kd-sfw img, .kd-sfw picture, .kd-sfw video, .kd-sfw source { opacity:0 !important; visibility:hidden !important; }
@@ -139,20 +210,21 @@
     `;
     document.head.appendChild(style);
     setSfw(sfwEnabled());
-
-    // Keyboard shortcut for SFW: "\" key (works on CZ layout with AltGr)
+    // --- SFW hotkey: "\" ---
     if (!window.__kd_sfwHotkeyBound) {
       window.__kd_sfwHotkeyBound = true;
       document.addEventListener('keydown', (e) => {
         const tag = (e.target?.tagName || '').toLowerCase();
-        const inEditable = e.target?.isContentEditable;
-        if (tag === 'input' || tag === 'textarea' || tag === 'select' || inEditable) return;
+        const editable = e.target?.isContentEditable;
+        if (tag === 'input' || tag === 'textarea' || tag === 'select' || editable) return;
         if (e.key === '\\' || (!e.ctrlKey && !e.altKey && !e.metaKey && e.code === 'Backslash')) {
           e.preventDefault();
           try { setSfw(!sfwEnabled()); } catch {}
         }
       }, true);
     }
+
+
 
     // ---------- UI ----------
     const box = document.createElement('div');
@@ -162,21 +234,24 @@
       margin:'8px 0',
       background: 'transparent',
       color: 'inherit',
-      fontFamily: 'Verdana, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif',
-      fontSize: '12px',
-      lineHeight: '1.35',
-      pointerEvents: 'auto'
+      fontFamily: FONT_STACK,
+      fontSize:'12px',
+      padding:'10px 10px',
+      border:`1px solid ${UI_BORDER}`,
+      borderRadius:'8px',
+      boxShadow:'none',
+      pointerEvents:'auto'
     });
     box.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;gap:6px;">
         <div style="display:flex;align-items:center;gap:6px;min-width:0;">
           <button id="e6-lang" type="button" title="${t('langToggle')}"
                   style="all:unset;cursor:pointer;font-size:16px;line-height:1;display:flex;align-items:center">${lang==='cs'?'🇨🇿':'🇬🇧'}</button>
-          <strong id="e6-title" style="font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${(GM_Get('kd_view_mode')||'open')==='open'?t('titleOpen'):t('titleDownload')}</strong>
+          <strong id="e6-title" style="font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${titleForView()}</strong>
         </div>
         <div style="display:flex;gap:6px;align-items:center;flex-shrink:0;">
           <button id="e6-sfw"   type="button" title="${t('sfw')}" style="all:unset;cursor:pointer;opacity:.9;">🛡️</button>
-          <button id="e6-view"  type="button" title="${(GM_Get('kd_view_mode')||'open')==='open'?t('viewOpen'):t('viewDownload')}" style="all:unset;cursor:pointer;opacity:.9;">${(GM_Get('kd_view_mode')||'open')==='open'?'⬇️':'🔗'}</button>
+          <button id="e6-view"  type="button" title="${viewMode==='open'?t('viewOpen'):t('viewDownload')}" style="all:unset;cursor:pointer;opacity:.9;">${viewMode==='open'?'⬇️':'🔗'}</button>
           <button id="e6-cset"  type="button" title="${t('gear')}" style="all:unset;cursor:pointer;opacity:.85;">⚙️</button>
           <button id="e6-min"   type="button" title="${t('minimize')}" style="all:unset;cursor:pointer;opacity:.85;">▁</button>
           <button id="e6-close" type="button" title="${t('close')}" style="all:unset;cursor:pointer;opacity:.85;">✕</button>
@@ -193,20 +268,22 @@
             </select>
           </div>
           <div id="grp-delay">
-            <div id="lbl-delay" style="margin-bottom:2px;"></div>
+            <div id="lbl-delay" style="margin-bottom:2px;">${viewMode==='open'?t('delayLabelOpen'):t('delayLabelDownload')}</div>
             <input id="e6-delay" type="number" min="200" step="100" value="1500"
                    style="width:100%;padding:5px;border-radius:6px;background:#111;border:none;color:inherit;">
           </div>
           <div id="grp-limit">
-            <div id="lbl-limit" style="margin-bottom:2px;"></div>
-            <input id="e6-limit" type="number" min="1" max="${HARD_CAP}" step="1" value="${HARD_CAP}"
+            <div id="lbl-limit" style="margin-bottom:2px;">${viewMode==='open'?t('limitLabelOpen'):t('limitLabelDownload')}</div>
+            <input id="e6-limit" type="number" min="1" step="1" placeholder="${DEFAULT_LIMIT}"
                    style="width:100%;padding:5px;border-radius:6px;background:#111;border:none;color:inherit;">
           </div>
-          <div id="grp-dest" style="display:none;">
+
+          <div id="grp-dest" style="display:${viewMode==='download'?'block':'none'};">
             <div id="lbl-dest" style="margin-bottom:2px;">${t('destLabel')}</div>
-            <div style="display:flex;gap:6px;align-items:center;">
-              <button id="e6-choose-dir" type="button" style="padding:6px 8px;border-radius:8px;background:#ffee95;border:none;color:#9da6ad;cursor:pointer;">${t('chooseFolder')}</button>
-              <div id="e6-dir-label" style="opacity:.95;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1 1 auto;">${t('folderDefault')}</div>
+            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+              <button id="e6-choose-dir" type="button"
+                      style="padding:6px 8px;border-radius:8px;background:#ffee95;border:none;color:#111;cursor:pointer;">${t('chooseFolder')}</button>
+              <span id="e6-dir-label" style="opacity:.95;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1 1 auto;">${t('folderDefault')}</span>
             </div>
           </div>
         </div>
@@ -222,9 +299,9 @@
 
         <div style="display:flex;gap:6px;flex-wrap:wrap;">
           <button id="e6-toggle" type="button"
-                  style="flex:1;padding:6px 8px;border-radius:8px;background:#2b9bff;border:none;color:#fff;cursor:pointer;">${(GM_Get('kd_view_mode')||'open')==='open'?t('startOpen'):t('startDownload')}</button>
+                  style="flex:1;padding:6px 8px;border-radius:8px;background:#1b6e1b;border:none;color:#fff;cursor:pointer;">${viewMode==='open'?t('startOpen'):t('startDownload')}</button>
           <button id="e6-stop"   type="button"
-                  style="flex:1;padding:6px 8px;border-radius:8px;background:#b11b1b;border:none;color:#fff;cursor:pointer;">${t('stop')}</button>
+                  style="flex:1;padding:6px 8px;border-radius:8px;background:#7a1b1b;border:none;color:#fff;cursor:pointer;">${t('stop')}</button>
         </div>
 
         <div id="e6-note" style="margin-top:6px;opacity:.95;">${t('ready')}</div>
@@ -233,88 +310,117 @@
       <div id="e6-mini" style="display:none;opacity:.95;">(min) <span id="e6-mini-text">0 | ${t('eta')} 0s</span></div>
     `;
 
+    // Mount do sidebaru / fallback
     function findSidebar(){ return document.querySelector('.sidebar, #sidebar, aside.sidebar, #tag-sidebar, .post-sidebar'); }
     function mountInSidebar(){
       const sb = findSidebar(); if (!sb) return false;
       if (box.parentNode && box.parentNode !== sb) box.parentNode.remove();
-      sb.prepend(box);
+      const modeBox = sb.querySelector('#mode-box');
+      const blacklistUI = sb.querySelector('.blacklist-ui');
+      if (modeBox && blacklistUI) sb.insertBefore(box, blacklistUI);
+      else if (modeBox?.nextElementSibling) sb.insertBefore(box, modeBox.nextElementSibling);
+      else sb.insertBefore(box, sb.firstChild);
       return true;
     }
-    function mountTop(){
-      const host = document.querySelector('.content, #content, main') || document.body;
-      if (box.parentNode && box.parentNode !== host) box.parentNode.remove();
-      host.prepend(box);
+    let mounted = mountInSidebar();
+    if (!mounted) {
+      const mo = new MutationObserver(()=>{ if (mountInSidebar()) mo.disconnect(); });
+      mo.observe(document.body, { childList:true, subtree:true });
     }
-    if (!mountInSidebar()) mountTop();
     addEventListener('popstate', mountInSidebar);
     document.addEventListener('pjax:end', mountInSidebar);
     document.addEventListener('turbo:load', mountInSidebar);
+    setTimeout(() => {
+      if (!box.isConnected) {
+        Object.assign(box.style, { position:'fixed', right:'12px', top:'12px', width: UI_WIDTH, zIndex: 999999 });
+        document.body.appendChild(box);
+      }
+    }, 1200);
 
-    // ---------- Elementy ----------
+    // ---------- ELEMENTY ----------
+    const $ = s => box.querySelector(s);
     const el = {
-      lang: byId('e6-lang'),
-      title: byId('e6-title'),
-      sfw: byId('e6-sfw'),
-      view: byId('e6-view'),
-      cset: byId('e6-cset'),
-      min: byId('e6-min'),
-      close: byId('e6-close'),
-      body: byId('e6-body'),
-      settings: byId('e6-settings'),
-      grpMode: byId('grp-mode'),
-      mode: byId('e6-mode'),
-      lblMode: byId('lbl-mode'),
-      grpDelay: byId('grp-delay'),
-      lblDelay: byId('lbl-delay'),
-      delay: byId('e6-delay'),
-      grpLimit: byId('grp-limit'),
-      lblLimit: byId('lbl-limit'),
-      limit: byId('e6-limit'),
-      grpDest: byId('grp-dest'),
-      lblDest: byId('lbl-dest'),
-      chooseDir: byId('e6-choose-dir'),
-      dirLabel: byId('e6-dir-label'),
-      bar: byId('e6-bar'),
-      fill: byId('e6-fill'),
-      stats: byId('e6-stats'),
-      stats2: byId('e6-stats2'),
-      toggle: byId('e6-toggle'),
-      stop: byId('e6-stop'),
-      note: byId('e6-note'),
-      mini: byId('e6-mini'),
-      miniTxt: byId('e6-mini-text')
+      lang: $('#e6-lang'), title: $('#e6-title'), view: $('#e6-view'),
+      cset: $('#e6-cset'), min: $('#e6-min'), close: $('#e6-close'),
+      body: $('#e6-body'), settings: $('#e6-settings'),
+      mini: $('#e6-mini'), miniTxt: $('#e6-mini-text'),
+      grpMode: $('#grp-mode'), grpDest: $('#grp-dest'),
+      lblMode: $('#lbl-mode'), lblDelay: $('#lbl-delay'),
+      lblLimit: $('#lbl-limit'), lblDest: $('#lbl-dest'),
+      mode: $('#e6-mode'), delay: $('#e6-delay'), limitI: $('#e6-limit'),
+      fill: $('#e6-fill'), stats: $('#e6-stats'), stats2: $('#e6-stats2'),
+      toggle: $('#e6-toggle'), stop: $('#e6-stop'), note: $('#e6-note'),
+      sfw: $('#e6-sfw'), chooseDir: $('#e6-choose-dir'), dirLabel: $('#e6-dir-label'),
     };
 
-    // ---------- Lokální stav ----------
-    let settingsCollapsed = true;
-    let viewMode = GM_Get('kd_view_mode') || 'open'; // 'open' | 'download'
-    let delayMs = 1500;
-    let maxCount = HARD_CAP;
-    let running = false;
-    let paused = false;
-    let timer = null;
-    let urls = [];
-    let idx = 0;
-    let lastChosenDir = null;
-    let lastChosenDirName = '';
+    // ---- BURST UI (wrap + překlady) ----
+    const grpBurst = document.createElement('div');
+    grpBurst.id = 'grp-burst';
+    grpBurst.style.marginTop = '6px';
+    grpBurst.innerHTML = `
+      <div id="lbl-burst-style" style="margin-bottom:2px;"></div>
+      <label style="display:flex;align-items:flex-start;gap:6px;margin-bottom:4px;">
+        <input id="kd-burst-off" type="radio" name="kd-burst" value="0">
+        <span id="txt-burst-off"></span>
+      </label>
+      <label style="display:flex;align-items:flex-start;gap:6px;margin-bottom:6px;">
+        <input id="kd-burst-on" type="radio" name="kd-burst" value="1">
+        <span id="txt-burst-on"></span>
+      </label>
+      <div id="grp-burst-step">
+        <div id="lbl-burst-step" style="margin-bottom:2px;"></div>
+        <input id="kd-burst-step" type="number" min="200" step="100"
+               style="width:100%;padding:5px;border-radius:6px;background:#111;border:none;color:inherit;">
+      </div>
+    `;
+    el.settings.appendChild(grpBurst);
+    const rbOff  = grpBurst.querySelector('#kd-burst-off');
+    const rbOn   = grpBurst.querySelector('#kd-burst-on');
+    const stepIn = grpBurst.querySelector('#kd-burst-step');
+    const stepWrap = grpBurst.querySelector('#grp-burst-step');
+    const lblBurstStyle = grpBurst.querySelector('#lbl-burst-style');
+    const lblBurstStep  = grpBurst.querySelector('#lbl-burst-step');
+    const txtBurstOff   = grpBurst.querySelector('#txt-burst-off');
+    const txtBurstOn    = grpBurst.querySelector('#txt-burst-on');
 
-    // ---------- Helpers UI ----------
-    function titleForView(){ return viewMode==='open' ? t('titleOpen') : t('titleDownload'); }
-    function hasGrid(){
-      return !!document.querySelector('article.thumbnail, .thumb, .post-preview, .posts .thumbnail-container');
-    }
-    function swallow(e){ e?.preventDefault?.(); e?.stopPropagation?.(); }
+    // init stav
+    rbOff.checked = !burstMode;
+    rbOn.checked  = burstMode;
+    stepWrap.style.display = burstMode ? 'block' : 'none';
+    stepIn.value = String(burstStepMs);
 
-    function setSettingsCollapsed(c){
-      settingsCollapsed = !!c;
-      el.settings.classList.toggle(HIDDEN_CLASS, settingsCollapsed);
-      el.cset.title = settingsCollapsed ? t('gearExpand') : t('gearCollapse');
+    rbOff.addEventListener('change', () => {
+      burstMode = false; GM_Set(BURST_MODE_KEY, '0'); stepWrap.style.display = 'none';
+    });
+    rbOn.addEventListener('change', () => {
+      burstMode = true;  GM_Set(BURST_MODE_KEY, '1'); stepWrap.style.display = 'block';
+    });
+    stepIn.addEventListener('change', () => {
+      const v = Math.max(200, parseInt(stepIn.value,10) || 1500);
+      burstStepMs = v; GM_Set(BURST_STEP_KEY, String(v));
+    });
+
+    // ---------- Ovládání UI ----------
+    function setSettingsCollapsed(collapsed){
+      settingsCollapsed = collapsed;
+      el.settings.classList.toggle(HIDDEN_CLASS, collapsed);
+      el.cset.style.opacity = collapsed ? '0.55' : '0.85';
+      el.cset.title = collapsed ? t('gearExpand') : t('gearCollapse');
     }
     setSettingsCollapsed(true);
 
-    function renderStats(opened,total,left,running,delay){
-      el.stats.textContent = `${opened}/${total} | ${t('eta')} ${fmtSec(((left||0)*(delay||0))/1000|0)}`;
-      el.stats2.textContent = (running ? t('running') : (opened===total && total>0 ? t('done') : t('ready')));
+    function setView(nextMode) {
+      viewMode = nextMode; GM_Set('kd_view_mode', viewMode);
+      el.grpMode.style.display = (viewMode === 'download') ? 'none' : 'block';
+      el.grpDest.style.display = (viewMode === 'download') ? 'block' : 'none';
+      el.lblDelay.textContent = (viewMode==='open' ? TXT[lang].delayLabelOpen : TXT[lang].delayLabelDownload);
+      el.lblLimit.textContent = (viewMode==='open' ? TXT[lang].limitLabelOpen : TXT[lang].limitLabelDownload);
+      el.view.textContent = (viewMode==='open' ? '⬇️' : '🔗');
+      el.view.title = (viewMode==='open' ? TXT[lang].viewOpen : TXT[lang].viewDownload);
+      el.title.textContent = titleForView();
+      if (!running) el.toggle.textContent = (viewMode==='open' ? TXT[lang].startOpen : TXT[lang].startDownload);
+      if (viewMode === 'download') setSettingsCollapsed(false);
+      applyLangTexts();
     }
 
     function applyLangTexts() {
@@ -335,104 +441,75 @@
       el.dirLabel.textContent = lastChosenDirName ? TXT[lang].folderChosen(lastChosenDirName) : TXT[lang].folderDefault;
       if (!running) {
         el.toggle.textContent = (viewMode==='open' ? TXT[lang].startOpen : TXT[lang].startDownload);
-        el.note.textContent = TXT[lang].ready;
+        el.note.textContent = TXT[lang].ready; el.stats.textContent = TXT[lang].ready; el.stats2.textContent = '';
       }
+      el.miniTxt && (el.miniTxt.textContent = `0 | ${TXT[lang].eta} 0s`);
+
+      // ---- burst texty (fix překladů) ----
+      lblBurstStyle.textContent = t('burstStyle');
+      txtBurstOff.textContent   = t('burstOff');
+      txtBurstOn.textContent    = t('burstOn');
+      lblBurstStep.textContent  = t('burstStep');
     }
 
-    // ---------- Přepínání View ----------
-    function setView(nextMode){
-      if (nextMode !== 'open' && nextMode !== 'download') return;
-      viewMode = nextMode; GM_Set('kd_view_mode', viewMode);
-      el.grpMode.style.display = (viewMode === 'download') ? 'none' : 'block';
-      el.grpDest.style.display = (viewMode === 'download') ? 'block' : 'none';
-      el.lblDelay.textContent = (viewMode==='open' ? TXT[lang].delayLabelOpen : TXT[lang].delayLabelDownload);
-      el.lblLimit.textContent = (viewMode==='open' ? TXT[lang].limitLabelOpen : TXT[lang].limitLabelDownload);
-      el.view.textContent = (viewMode==='open' ? '⬇️' : '🔗');
-      el.view.title = (viewMode==='open' ? TXT[lang].viewOpen : TXT[lang].viewDownload);
-      el.title.textContent = titleForView();
-      if (!running) el.toggle.textContent = (viewMode==='open' ? TXT[lang].startOpen : TXT[lang].startDownload);
-      if (viewMode === 'download') setSettingsCollapsed(false);
+    el.lang.addEventListener('click', (e) => {
+      e.preventDefault();
+      lang = (lang === 'cs') ? 'en' : 'cs';
+      GM_Set(LANG_KEY, lang);
       applyLangTexts();
+    });
+
+    el.view.addEventListener('click', (e) => { e.preventDefault(); setView(viewMode === 'open' ? 'download' : 'open'); });
+    el.cset.addEventListener('click', (e) => { e.preventDefault(); setSettingsCollapsed(!settingsCollapsed); applyLangTexts(); }, true);
+    setView(viewMode);
+
+    // mini / close
+    el.min.addEventListener('click', e=>{ e.preventDefault(); const vis = !el.body.classList.contains(HIDDEN_CLASS); el.body.classList.toggle(HIDDEN_CLASS, vis); el.mini.style.display = vis ? '' : 'none'; }, true);
+    el.close.addEventListener('click', e=>{ e.preventDefault(); box.remove(); }, true);
+
+    // ---------- URL HELPERY ----------
+    const toAbs = href => new URL(href, location.href).href;
+    const isFileUrl = u => { try {
+      const url = new URL(u, location.href);
+      const p = url.pathname.toLowerCase();
+      return /\.(png|jpe?g|gif|webp|webm|mp4|avif)$/.test(p) || url.hostname.startsWith('static');
+    } catch { return false; } };
+    function pickPostHref(card){
+      const as=[...card.querySelectorAll('a[href]')];
+      let a=as.find(x=>/\/posts\//i.test(x.getAttribute('href')) && !isFileUrl(x.href)); if (a) return toAbs(a.getAttribute('href'));
+      a=as.find(x=>x.hostname===location.hostname && !isFileUrl(x.href)); if (a) return toAbs(a.getAttribute('href'));
+      return as[0]?toAbs(as[0].getAttribute('href')):null;
+    }
+    function pickFileHref(card){
+      const u=card.dataset.fileUrl||card.getAttribute(ATTR_FILE_URL);
+      if (u) return toAbs(u);
+      const img=card.querySelector('img'); if (img?.src) return img.src;
+      return pickPostHref(card);
+    }
+    function collectUrlsOpen(mode, limitVal){
+      let list=[...document.querySelectorAll(SELECTOR_CARD)]
+        .map(c=>mode==='post'?pickPostHref(c):pickFileHref(c)).filter(Boolean);
+      list=[...new Set(list)];
+      if (Number.isFinite(limitVal) && limitVal>0) list = list.slice(0, limitVal);
+      return list;
+    }
+    function collectUrlsDownload(limitVal){
+      let list=[...document.querySelectorAll(SELECTOR_CARD)]
+        .map(c=>pickFileHref(c)).filter(Boolean);
+      list=[...new Set(list)];
+      if (Number.isFinite(limitVal) && limitVal>0) list = list.slice(0, limitVal);
+      return list;
     }
 
-    // ---------- Kolekce URL ----------
-    function collectUrls(){
-      const links = [];
-      const grid = document.querySelectorAll('article.thumbnail a[href*="/posts/"], .post-preview a[href*="/posts/"]');
-      grid.forEach(a => {
-        try {
-          const href = a.getAttribute('href') || '';
-          const url = new URL(href, location.href).href;
-          links.push(url);
-        } catch {}
-      });
-      return links.slice(0, HARD_CAP);
-    }
-
-    function updateBar(){
-      const total = urls.length;
-      const opened = Math.min(idx, total);
-      const left = Math.max(0, total - opened);
-      const per = total ? Math.round((opened/total)*100) : 0;
-      el.fill.style.width = per + '%';
-      renderStats(opened,total,left,running,delayMs);
-    }
-
-    function stopRun(noteKey='paused'){
-      running=false; paused=false; clearTimeout(timer); timer=null;
-      if (activeAbort) { try { activeAbort.abort(); } catch {} activeAbort = null; }
-      el.toggle.textContent=(viewMode==='open'?TXT[lang].startOpen:TXT[lang].startDownload);
-      const st = GM_Get(STATE_KEY) || {};
-      st.running=false; st.note = (noteKey==='paused'?TXT[lang].paused:TXT[lang].ready);
-      GM_Set(STATE_KEY, st);
-      el.note.textContent = st.note;
-    }
-
-    let activeAbort = null;
-
-    async function stepOpen(){
-      if (!running) return;
-      if (idx >= urls.length) { stopRun('done'); updateBar(); return; }
-      const u = urls[idx++];
-      GM_openInTab(u, { active:false });
-      updateBar();
-      timer = setTimeout(stepOpen, delayMs);
-    }
-
-    async function stepDownload(){
-      if (!running) return;
-      if (idx >= urls.length) { stopRun('done'); updateBar(); return; }
-      const u = urls[idx++];
-
-      if (lastChosenDir) {
-        try {
-          await downloadWithFS(u);
-        } catch (e) { /* fallback níže */ }
-      } else {
-        await downloadViaAPI(u);
+    // ---------- OTEVÍRÁNÍ ----------
+    function openInBackground(u){
+      try { GM_openInTab(u, {active:false, insert:true, setParent:true}); }
+      catch {
+        const a=document.createElement('a');
+        a.href=u; a.target='_blank'; a.rel='noopener noreferrer'; document.body.appendChild(a);
+        const ev=new MouseEvent('click',{view:window,bubbles:true,cancelable:true,ctrlKey:true});
+        a.dispatchEvent(ev); a.remove();
       }
-      updateBar();
-      timer = setTimeout(stepDownload, delayMs);
-    }
-
-    async function startOrPause(){
-      if (running) { paused=true; stopRun('paused'); return; }
-
-      urls = collectUrls();
-      idx = 0;
-      if (!urls.length) { el.note.textContent = TXT[lang].nothing; return; }
-
-      delayMs = Math.max(200, parseInt(el.delay.value,10) || 1500);
-      maxCount = Math.max(1, Math.min(HARD_CAP, parseInt(el.limit.value,10) || HARD_CAP));
-      urls = urls.slice(0, maxCount);
-
-      running=true; paused=false;
-      el.toggle.textContent=TXT[lang].pause;
-      const st = { running:true, total: urls.length, opened: 0, delayMs };
-      GM_Set(STATE_KEY, st);
-
-      if (viewMode === 'open') stepOpen();
-      else stepDownload();
     }
 
     // ---------- DOWNLOAD ----------
@@ -464,95 +541,229 @@
         activeAbort = new AbortController();
         const resp = await fetch(url, { signal: activeAbort.signal, credentials: 'include' });
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
-        const ct = resp.headers.get('content-type') || '';
-        const ext = guessExtFromType(ct) || '.' + (fileNameFromUrl(url).split('.').pop() || 'dat');
-        const base = fileNameFromUrl(url).replace(/\.[a-z0-9]+$/i,'');
-        const name = safeName(base) + ext;
-        const buf = await resp.arrayBuffer();
-        await fsWriteFile(lastChosenDir, name, buf);
-      } finally {
-        activeAbort = null;
+        let name = fileNameFromUrl(url);
+        if (!/\.\w{2,5}$/.test(name)) { const ext = guessExtFromType(resp.headers.get('content-type')||''); if (ext) name += ext; }
+        const buf = await resp.arrayBuffer(); activeAbort = null;
+        await fsWriteFile(dirHandle, name, buf);
+        return true;
+      } catch (e) {
+        try {
+          await new Promise((resolve, reject) => {
+            const name = fileNameFromUrl(url);
+            chrome.runtime.sendMessage({ type: 'download', url, filename: name }, (res) => {
+              const er = chrome.runtime.lastError;
+              if (er) reject(er);
+              else if (!res?.ok) reject(new Error(res?.error||'download failed'));
+              else resolve();
+            });
+          });
+          return true;
+        } catch { return false; }
       }
     }
 
-    async function downloadViaAPI(url) {
-      const filename = fileNameFromUrl(url);
-      try {
-        await new Promise((resolve) => {
-          chrome.runtime.sendMessage({ type:'download', url, filename }, () => resolve());
-        });
-      } catch {}
+    function downloadWithDownloadsAPI(url){
+      return new Promise((resolve, reject) => {
+        const name = fileNameFromUrl(url);
+        try {
+          chrome.runtime.sendMessage({ type: 'download', url, filename: name }, (res) => {
+            if (chrome.runtime.lastError) reject(chrome.runtime.lastError);
+            else if (!res || !res.ok) reject(new Error(res && res.error ? res.error : 'download failed'));
+            else resolve();
+          });
+        } catch (e) { reject(e); }
+      });
     }
 
-    // ---------- Sdílený stav pro sidebar ----------
-    function renderStatsShared(){
-      const s = GM_Get(STATE_KEY) || {};
+    async function downloadOne(url){
+      try {
+        if (dirHandle && typeof dirHandle.getFileHandle === 'function') {
+          const ok = await downloadWithFS(url);
+          if (ok) return true;
+          await downloadWithDownloadsAPI(url);
+          return true;
+        } else {
+          await downloadWithDownloadsAPI(url);
+          return true;
+        }
+      } catch { return false; }
+    }
+
+    // ---------- STATISTIKY/UI STAV ----------
+    function fmtSec(s){ s=Math.max(0,Math.ceil(s)); const m=(s/60)|0, r=s%60; return m?`${m}m ${r}s`:`${r}s`; }
+    function renderStats(opened,total,left,isRunning,delay){
+      const next = isRunning && !paused ? (delay/1000) : 0;
+      const etaSec = left * (delay/1000);
+      const line = (viewMode==='open') ? TXT[lang].statusOpen(opened,total,left) : TXT[lang].statusDownload(opened,total,left);
+      el.stats.textContent = isRunning ? line : (opened===total && total>0) ? TXT[lang].done : TXT[lang].ready;
+      el.stats2.textContent = total>0 ? `${TXT[lang].next}: ${next.toFixed(1)}s | ${TXT[lang].eta}: ${fmtSec(etaSec)}` : '';
+      el.miniTxt && (el.miniTxt.textContent = `${left} | ${TXT[lang].eta} ${fmtSec(etaSec)}`);
+    }
+    function renderFromShared(s){
       const total = s.total || 0;
       const opened = Math.min(s.opened || 0, total);
       const left = Math.max(0, total - opened);
       const per = total ? Math.round((opened/total)*100) : 0;
       el.fill.style.width = per + '%';
-      const hasG = hasGrid();
-      el.toggle.disabled = !hasG; el.toggle.style.opacity = hasG ? 1 : .5;
+      el.toggle.disabled = !hasGrid; el.toggle.style.opacity = hasGrid ? 1 : .5;
       el.note.textContent = s.note || (s.running ? TXT[lang].running : (total>0 && left===0 ? TXT[lang].done : TXT[lang].ready));
-      if (!running) el.toggle.textContent = s.running ? TXT[lang].pause : (viewMode==='open'?TXT[lang].startOpen:TXT[lang].startDownload);
-      const etaSec = ((left||0) * (s.delayMs || 1500)) / 1000 | 0;
-      el.stats.textContent = `${opened}/${total} | ${TXT[lang].eta} ${fmtSec(etaSec)}`;
-      el.miniTxt && (el.miniTxt.textContent = `${left} | ${TXT[lang].eta} ${fmtSec(etaSec)}`);
+      if (!running) el.toggle.textContent = s.running ? TXT[lang].runningElsewhere : (viewMode==='open'?TXT[lang].startOpen:TXT[lang].startDownload);
+      renderStats(opened,total,left, !!s.running, s.delayMs || 1500);
     }
     try {
-      GM_addValueChangeListener(STATE_KEY, (_k,_o,_n)=>{ let obj=null; try{ obj=typeof _n === 'string' ? JSON.parse(_n) : _n; }catch{}; if(!running && obj) renderStatsShared(); });
+      GM_addValueChangeListener(STATE_KEY, (_k,_o,_n)=>{ let obj=null; try{ obj=typeof _n === 'string' ? JSON.parse(_n||'{}') : _n; }catch{}; if(!running && obj) renderFromShared(obj); });
     } catch {}
 
-    // ---------- Handlery UI ----------
-    el.lang.addEventListener('click', (e) => {
-      e.preventDefault();
-      lang = (lang === 'cs') ? 'en' : 'cs';
-      GM_Set(LANG_KEY, lang);
-      applyLangTexts();
-    }, true);
+    function updateBar(){
+      const total = urls.length;
+      const opened = Math.min(idx, total);
+      const left = Math.max(0, total - opened);
+      const per = total ? Math.round((opened/total)*100) : 0;
+      el.fill.style.width = per + '%';
+      renderStats(opened,total,left,running,delayMs);
+    }
 
-    el.view.addEventListener('click', (e) => { e.preventDefault(); setView(viewMode === 'open' ? 'download' : 'open'); });
+    function stopRun(noteKey='paused'){
+      running=false; paused=false; clearTimeout(timer); timer=null;
+      if (activeAbort) { try { activeAbort.abort(); } catch {} activeAbort = null; }
+      el.toggle.textContent=(viewMode==='open'?TXT[lang].startOpen:TXT[lang].startDownload);
+      el.toggle.disabled = !hasGrid;
+      el.note.textContent=TXT[lang][noteKey] || TXT[lang].paused;
+      updateBar(); publishLocalStatus(TXT[lang][noteKey] || TXT[lang].paused);
+    }
 
-    // SFW button toggle
-    el.sfw.addEventListener('click', (e) => { e.preventDefault(); setSfw(!sfwEnabled()); }, true);
+    async function tickOpen(){
+      if (!running || paused) return;
+      if (idx >= urls.length){ stopRun('done'); return; }
+      openInBackground(urls[idx++]); updateBar(); publishLocalStatus();
+      if (idx >= urls.length){ stopRun('done'); return; }
+      timer = setTimeout(tickOpen, delayMs);
+    }
+    async function tickDownload(){
+      if (!running || paused) return;
+      if (idx >= urls.length){ stopRun('done'); return; }
+      const ok = await downloadOne(urls[idx]); idx++; updateBar(); publishLocalStatus(ok ? undefined : TXT[lang].dlError);
+      if (idx >= urls.length){ stopRun('done'); return; }
+      timer = setTimeout(tickDownload, delayMs);
+    }
 
-    el.cset.addEventListener('click', (e) => { e.preventDefault(); setSettingsCollapsed(!settingsCollapsed); applyLangTexts(); }, true);
+    function startOrPause(){
+      if (!hasGrid) return;
+      if (!running){
+        modeVal = (viewMode==='open') ? el.mode.value : 'file';
+        const d = parseInt(el.delay.value,10); delayMs = Number.isFinite(d)&&d>=200 ? d : delayMs;
+        const l = parseInt(el.limitI.value,10); const want = Number.isFinite(l)&&l>0 ? l : DEFAULT_LIMIT;
 
-    el.min.addEventListener('click', e=>{ e.preventDefault(); const vis = el.body.style.display !== 'none'; el.body.style.display = vis ? 'none' : ''; el.cset.classList.toggle(HIDDEN_CLASS, !vis); el.mini.style.display = vis ? '' : 'none'; }, true);
+        let found = (viewMode==='open') ? collectUrlsOpen(modeVal, want) : collectUrlsDownload(want);
+        if (found.length > HARD_CAP) found = found.slice(0, HARD_CAP);
 
-    el.close.addEventListener('click', e=>{ e.preventDefault(); box.remove(); }, true);
+        if (!found.length){
+          el.note.textContent = TXT[lang].nothing; publishLocalStatus(TXT[lang].nothing); return;
+        }
 
+        // ---- BURST režim: předání seznamu a kroku backgroundu (s alarmy)
+        if (viewMode === 'open' && burstMode) {
+          try {
+            el.note.textContent = TXT[lang].running;
+            el.stats.textContent = `Burst: připravuji ${found.length} karet…`;
+            chrome.runtime.sendMessage({ type: 'burstOpen', urls: found, stepMs: burstStepMs }, (res) => {
+              const e = chrome.runtime.lastError;
+              if (e) {
+                el.stats.textContent = 'Chyba: ' + e.message;
+                el.note.textContent = TXT[lang].paused;
+                publishLocalStatus('error');
+              } else if (!res || !res.ok) {
+                el.stats.textContent = 'Chyba: ' + (res && res.error ? res.error : 'burst failed');
+                el.note.textContent = TXT[lang].paused;
+                publishLocalStatus('error');
+              } else {
+                el.fill.style.width = '100%';
+                el.stats.textContent = `Burst vytvořen: ${res.created} karet. Odpočty běží v titulcích.`;
+                el.note.textContent = TXT[lang].done;
+                publishLocalStatus(TXT[lang].done);
+              }
+            });
+          } catch (err) {
+            el.stats.textContent = 'Chyba: ' + (err && err.message ? err.message : err);
+            el.note.textContent = TXT[lang].paused;
+            publishLocalStatus('error');
+          }
+          return; // konec – žádná sekvenční smyčka
+        }
+
+        // ---- původní sekvenční start (OPEN/DOWNLOAD)
+        urls = found; idx = 0; running = true; paused = false;
+        el.toggle.textContent=TXT[lang].pause; el.note.textContent=TXT[lang].running;
+        updateBar(); publishLocalStatus(TXT[lang].running);
+        timer = setTimeout(viewMode==='open' ? tickOpen : tickDownload, delayMs);
+        return;
+      }
+
+      // toggle pauzy
+      if (!paused){
+        paused = true; el.toggle.textContent=TXT[lang].resume; el.note.textContent=TXT[lang].paused;
+        clearTimeout(timer); timer=null; if (activeAbort) { try { activeAbort.abort(); } catch {} activeAbort=null; }
+        updateBar(); publishLocalStatus(TXT[lang].paused);
+      } else {
+        paused = false; el.toggle.textContent=TXT[lang].pause; el.note.textContent=TXT[lang].running;
+        updateBar(); publishLocalStatus(TXT[lang].running);
+        timer = setTimeout(viewMode==='open' ? tickOpen : tickDownload, delayMs);
+      }
+    }
+
+    function swallow(e){ e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); }
     el.toggle.addEventListener('click', e=>{ swallow(e); startOrPause(); }, true);
-
     el.stop.addEventListener('click',   e=>{ swallow(e); urls=[]; idx=0; stopRun('paused'); }, true);
 
+    // ---------- VÝBĚR SLOŽKY ----------
+    async function pickDirectoryHandle(){
+      const pickerHost = (typeof window.showDirectoryPicker === 'function') ? window : null;
+      if (!pickerHost) throw new Error('noPicker');
+
+      let handle = null;
+      try { handle = await pickerHost.showDirectoryPicker({ startIn: 'downloads' }); }
+      catch { handle = await pickerHost.showDirectoryPicker(); }
+
+      if (handle.queryPermission) {
+        let p = await handle.queryPermission({ mode: 'readwrite' });
+        if (p !== 'granted' && handle.requestPermission) {
+          p = await handle.requestPermission({ mode: 'readwrite' });
+          if (p !== 'granted') throw new Error('permDenied');
+        }
+      } else if (handle.requestPermission) {
+        const p = await handle.requestPermission({ mode: 'readwrite' });
+        if (p !== 'granted') throw new Error('permDenied');
+      }
+      return handle;
+    }
+
     el.chooseDir.addEventListener('click', async (e) => {
-      swallow(e);
+      e.preventDefault();
       try {
-        const dir = await window.showDirectoryPicker({ mode:'readwrite' });
-        lastChosenDir = dir;
-        lastChosenDirName = dir.name || '…';
-        el.dirLabel.textContent = TXT[lang].folderChosen(lastChosenDirName);
+        const handle = await pickDirectoryHandle();
+        dirHandle = handle;
+        lastChosenDirName = handle?.name || '';
+        el.dirLabel.textContent = lastChosenDirName ? TXT[lang].folderChosen(lastChosenDirName) : TXT[lang].folderDefault;
         el.note.textContent = TXT[lang].ready;
-      } catch {
-        lastChosenDir = null; lastChosenDirName = '';
-        el.dirLabel.textContent = TXT[lang].folderDefault;
-        el.note.textContent = TXT[lang].fsCancel;
+      } catch (err) {
+        dirHandle = null; lastChosenDirName = '';
+        if (err && err.message === 'noPicker') { el.dirLabel.textContent = TXT[lang].folderDefault; el.note.textContent = TXT[lang].noFS; }
+        else if (err && (err.message === 'permDenied')) { el.dirLabel.textContent = TXT[lang].folderDefault; el.note.textContent = TXT[lang].fsDenied; }
+        else { el.dirLabel.textContent = TXT[lang].folderDefault; el.note.textContent = TXT[lang].fsCancel; }
       }
     }, true);
 
-    const gridPresent = hasGrid();
-    if (!gridPresent){
+    if (!hasGrid){
       el.toggle.disabled = true; el.toggle.style.opacity = .5;
       el.stats.textContent = TXT[lang].noGallery;
     }
 
     // ---------- INIT ----------
-    // výchozí popisky dle aktuálního zvoleného módu
-    el.lblDelay.textContent = (viewMode==='open' ? TXT[lang].delayLabelOpen : TXT[lang].delayLabelDownload);
-    el.lblLimit.textContent = (viewMode==='open' ? TXT[lang].limitLabelOpen : TXT[lang].limitLabelDownload);
-    el.grpDest.style.display = (viewMode === 'download') ? 'block' : 'none';
+    if (!running) { shared = readShared(); if (shared && typeof shared === 'object') renderFromShared(shared); }
+    const paintSfwBtn = ()=>{ if (el.sfw) el.sfw.style.opacity = sfwEnabled() ? '1' : '.35'; };
+    el.sfw.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); setSfw(!sfwEnabled()); paintSfwBtn(); }, true);
+    addEventListener('keydown', (e) => { if (e.key === '\\') { e.preventDefault(); setSfw(!sfwEnabled()); paintSfwBtn(); } });
+    paintSfwBtn();
 
     updateBar();
     applyLangTexts();
