@@ -4,13 +4,30 @@
   "version": "6.2.1",
   "description": "Otevírání/stahování ze stránek s cestou /posts*. CZ/EN UI, delay/limit, volba složky (FS API) + fallback do Stažené, spodní fixní lišta. Burst/placeholder režim.",
   "permissions": [
-	"downloads", 
-	"storage", 
-	"tabs", 
-	"alarms",
-	"tabGroups"
+    "downloads",
+    "storage",
+    "tabs",
+    "alarms",
+    "tabGroups",
+    "contextMenus"
   ],
   "background": { "service_worker": "background.js" },
+
+  "action": {
+    "default_title": "e6 – přepnout řazení skupiny"
+  },
+
+  "commands": {
+    "toggle-sort": {
+      "suggested_key": { "default": "Ctrl+Shift+X" },
+      "description": "Přepnout řazení skupiny e6 (A↔Z, 1↔9)"
+    },
+    "toggle-locale": {
+      "suggested_key": { "default": "Ctrl+Shift+L" },
+      "description": "Přepnout jazyk řazení (Auto → CZ → EN)"
+    }
+  },
+
   "content_scripts": [
     {
       "matches": ["*://*/*"],
