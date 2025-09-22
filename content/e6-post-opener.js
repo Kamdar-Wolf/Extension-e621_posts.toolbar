@@ -197,33 +197,79 @@
       });
     }
 
-    // ---------- SFW ----------
-    const isGallery = /^\/posts(\?|$)/.test(location.pathname + location.search);
-    const SFW_KEY = isGallery ? 'kd_sfw_mode_gallery' : 'kd_sfw_mode_post';
-    const sfwEnabled = () => localStorage.getItem(SFW_KEY) === '1';
-    function setSfw(on){ if (on) localStorage.setItem(SFW_KEY,'1'); else localStorage.removeItem(SFW_KEY); document.documentElement.classList.toggle('kd-sfw', on); }
-    const style = document.createElement('style');
-    style.textContent = `
-      .kd-sfw img, .kd-sfw picture, .kd-sfw video, .kd-sfw source { opacity:0 !important; visibility:hidden !important; }
-      .kd-sfw article.thumbnail { background:#0c0c0c !important; border-radius:8px; }
-      .kd-sfw #image-container, .kd-sfw #image { background:#0c0c0c !important; }
-      .${HIDDEN_CLASS} { display: none !important; }
-    `;
-    document.head.appendChild(style);
-    setSfw(sfwEnabled());
-    // --- SFW hotkey: "\" ---
-    if (!window.__kd_sfwHotkeyBound) {
-      window.__kd_sfwHotkeyBound = true;
-      document.addEventListener('keydown', (e) => {
-        const tag = (e.target?.tagName || '').toLowerCase();
-        const editable = e.target?.isContentEditable;
-        if (tag === 'input' || tag === 'textarea' || tag === 'select' || editable) return;
-        if (e.key === '\\' || (!e.ctrlKey && !e.altKey && !e.metaKey && e.code === 'Backslash')) {
-          e.preventDefault();
-          try { setSfw(!sfwEnabled()); } catch {}
-        }
-      }, true);
-    }
+// ---------- SFW ----------
+const isGallery = /^\/posts(\?|$)/.test(location.pathname + location.search);
+const SFW_KEY = isGallery ? 'kd_sfw_mode_gallery' : 'kd_sfw_mode_post';
+const sfwEnabled = () => localStorage.getItem(SFW_KEY) === '1';
+function setSfw(on){
+  if (on) localStorage.setItem(SFW_KEY,'1'); else localStorage.removeItem(SFW_KEY);
+  document.documentElement.classList.toggle('kd-sfw', on);
+}
+const style = document.createElement('style');
+style.textContent = `
+  .kd-sfw img, .kd-sfw picture, .kd-sfw video, .kd-sfw source { opacity:0 !important; visibility:hidden !important; }
+  .kd-sfw article.thumbnail { background:#0c0c0c !important; border-radius:8px; }
+  .kd-sfw #image-container, .kd-sfw #image { background:#0c0c0c !important; }
+  .${HIDDEN_CLASS} { display: none !important; }
+`;
+document.head.appendChild(style);
+setSfw(sfwEnabled());
+
+// ------- SFW HOTKEY – nastav tady --------
+// PŘÍKLADY PRESETŮ (nech jen JEDEN aktivní):
+// 1) Jen fyzická klávesa "\" (stabilní na CZ/EN):
+	const HOTKEY = { useCode:true, code:'Backslash', ctrl:false, alt:false, shift:false, meta:false };
+
+// 2) Shift + "\":
+	// const HOTKEY = { useCode:true, code:'Backslash', shift:true };
+
+// 3) Ctrl + Alt + S (pozor na AltGr=Ctrl+Alt):
+	// const HOTKEY = { useCode:true, code:'KeyS', ctrl:true, alt:true };
+
+// 4) Jen písmeno "s" podle rozložení (CZ/EN závislé):
+	// const HOTKEY = { useCode:false, key:'s' };
+
+// 5) F2:
+	// const HOTKEY = { useCode:true, code:'F2' };
+
+// -----------------------------------------
+
+function matchesHotkey(e) {
+  // ignoruj psaní do políček
+  const tag = (e.target?.tagName || '').toLowerCase();
+  if (tag === 'input' || tag === 'textarea' || tag === 'select' || e.target?.isContentEditable) return false;
+
+  // ověř hlavní klávesu
+  let mainOk = false;
+  if (HOTKEY.useCode) {
+    // porovnává fyzickou klávesu (KeyS, Backslash, F2, ...)
+    mainOk = e.code === HOTKEY.code;
+  } else {
+    // porovnává znak podle rozložení (např. 's' nebo '\\')
+    const want = (HOTKEY.key || '').toLowerCase();
+    mainOk = (e.key || '').toLowerCase() === want;
+  }
+
+  // ověř modifikátory (true = musí být stisknutý, false = nesmí být stisknutý)
+  const modsOk =
+    (!!HOTKEY.ctrl  === !!e.ctrlKey)  &&
+    (!!HOTKEY.alt   === !!e.altKey)   &&
+    (!!HOTKEY.shift === !!e.shiftKey) &&
+    (!!HOTKEY.meta  === !!e.metaKey);
+
+  return mainOk && modsOk;
+}
+
+// --- SFW hotkey handler ---
+if (!window.__kd_sfwHotkeyBound) {
+  window.__kd_sfwHotkeyBound = true;
+  document.addEventListener('keydown', (e) => {
+    if (!matchesHotkey(e)) return;
+    e.preventDefault();
+    try { setSfw(!sfwEnabled()); } catch {}
+  }, true);
+}
+
 
 
 
