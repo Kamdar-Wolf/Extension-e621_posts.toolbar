@@ -3,7 +3,13 @@
   "name": "e621/e6AI Posts Opener + Toolbar",
   "version": "6.2.1",
   "description": "Otevírání/stahování ze stránek s cestou /posts*. CZ/EN UI, delay/limit, volba složky (FS API) + fallback do Stažené, spodní fixní lišta. Burst/placeholder režim.",
-  "permissions": ["downloads", "storage", "tabs", "alarms"],
+  "permissions": [
+	"downloads", 
+	"storage", 
+	"tabs", 
+	"alarms",
+	"tabGroups"
+  ],
   "background": { "service_worker": "background.js" },
   "content_scripts": [
     {
