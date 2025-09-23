@@ -34,7 +34,8 @@
       "include_globs": ["*/posts*", "*/posts/*"],
       "js": [
         "content/e6-post-opener.js",
-        "content/e6-post-toolbar.js"
+        "content/e6-post-toolbar.js",
+		"content/i18n-runtime.js"
       ],
       "run_at": "document_idle"
     }
