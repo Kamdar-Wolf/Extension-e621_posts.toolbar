@@ -10,23 +10,22 @@ const MAP_KEY = "kd_burst_map"; // { [tabId]: { url, alarmName, openerId? } }
 const sessions = new Map();
 // windowId -> tabGroupId (jediná skupina "e6" v daném okně)
 const groupCache = new Map();
+// windowId -> tabGroupId (skupina "e6 (čeká)")
+const phGroupCache = new Map();
 // groupId -> debounce časovač pro řazení
 const sortTimers = new Map();
 
 // Vzhled skupiny (barvy: "blue","red","yellow","green","pink","purple","cyan","orange","grey")
 const GROUP_TITLE = "e6";
-const GROUP_COLOR = "blue"; // „královská modř“ v UI tečkách
+const GROUP_COLOR = "blue";
 
-// --- NOVÉ: zvláštní skupina pro placeholdery ---
+// --- skupina pro placeholdery ---
 const PH_GROUP_TITLE = "e6 (čeká)";
 const PH_GROUP_COLOR = "grey";
 const PH_GROUP_COLLAPSED = true;
-// windowId -> tabGroupId (skupina "e6 (čeká)")
-const phGroupCache = new Map();
 
 // --- UI locale (pro celé UI rozšíření) ---
-const SUPPORTED_LOCALES = ["en", "cs"]; // >>> Přidej např. "es" pro španělštinu
-// Pravidelné přerovnání (pro jistotu)
+const SUPPORTED_LOCALES = ["en", "cs"]; // můžeš rozšířit např. o "es"
 const MAINT_ALARM = "kd-resort-e6-posts";
 const MAINT_PERIOD_MIN = 0.25; // ~15 sekund
 
@@ -36,10 +35,10 @@ const SORT_DEFAULT = "asc";
 let sortDirCache = SORT_DEFAULT;
 
 // Locale pro řazení + UI (Auto/CZ/EN)
-const LOCALE_KEY = "kd_sort_locale";     // "auto" | "cs" | "en"  (můžeš rozšířit)
+const LOCALE_KEY = "kd_sort_locale";     // "auto" | "cs" | "en"
 const LOCALE_DEFAULT = "auto";
-let localeCache = LOCALE_DEFAULT;        // aktuální volba
-let acceptLangs = [];                    // seznam jazyků z prohlížeče (pro Auto)
+let localeCache = LOCALE_DEFAULT;
+let acceptLangs = [];
 
 // ============= pomocné funkce: storage =============
 async function getMap() {
@@ -67,7 +66,7 @@ async function removeMapping(tabId) {
 async function loadSortDir() {
   const o = await chrome.storage.local.get(SORT_KEY);
   const v = (o[SORT_KEY] || SORT_DEFAULT);
-  sortDirCache = (v === "desc" ? "desc" : "asc");
+  sortDirCache = (v === "desc") ? "desc" : "asc";
   return sortDirCache;
 }
 async function setSortDir(dir) {
@@ -87,7 +86,6 @@ async function setLocale(v) {
   const val = (v === "cs" || v === "en") ? v : "auto";
   localeCache = val;
   await chrome.storage.local.set({ [LOCALE_KEY]: val });
-  // po uložení informuj UI
   try { await broadcastUiLocale(); } catch {}
   return val;
 }
@@ -100,7 +98,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (changes[LOCALE_KEY]) {
     const v = changes[LOCALE_KEY].newValue;
     localeCache = (v === "cs" || v === "en") ? v : "auto";
-    broadcastUiLocale(); // přeposlat do UI
+    broadcastUiLocale();
   }
 });
 
@@ -161,12 +159,11 @@ function getCollator() {
 function resolveUiLocale() {
   if (localeCache && localeCache !== "auto") return localeCache; // cs|en
   const langs = (acceptLangs || []).map(x => String(x).toLowerCase());
-  // najdi první podporovaný jazyk podle prefixu (cs-CZ → cs, en-GB → en)
   for (const l of langs) {
     const base = l.split("-")[0];
     if (SUPPORTED_LOCALES.includes(base)) return base;
   }
-  return "en"; // fallback
+  return "en";
 }
 async function broadcastUiLocale() {
   const loc = resolveUiLocale();
@@ -182,7 +179,7 @@ async function broadcastUiLocale() {
 async function ensureSingleGroup(windowId) {
   if (!hasTabGroupsAPI()) return null;
 
-  // cache (a ověřit existenci)
+  // cache (ověřit existenci)
   if (groupCache.has(windowId)) {
     const cached = groupCache.get(windowId);
     try {
@@ -206,7 +203,7 @@ async function ensureSingleGroup(windowId) {
   return null; // vytvoří se při prvním seskupení
 }
 
-// --- NOVÉ: zajisti (nebo najdi) skupinu pro placeholdery ---
+// zajisti (nebo najdi) skupinu pro placeholdery
 async function ensurePlaceholderGroup(windowId) {
   if (!hasTabGroupsAPI()) return null;
 
@@ -259,7 +256,7 @@ async function groupTabIfPosts(tabId, windowId, targetUrl) {
   return gid;
 }
 
-// --- NOVÉ: seskup kartu do placeholderové skupiny (vždy zavřené) ---
+// seskup kartu do placeholderové skupiny (vždy zavřené)
 async function groupTabAsPlaceholder(tabId, windowId) {
   if (!hasTabGroupsAPI()) return null;
 
@@ -382,7 +379,6 @@ chrome.runtime.onInstalled.addListener(async () => {
     });
   } catch {}
 
-  // po instalaci pošli UI locale do všech tabů
   try { await broadcastUiLocale(); } catch {}
 });
 
@@ -399,7 +395,6 @@ chrome.alarms.create(MAINT_ALARM, { periodInMinutes: MAINT_PERIOD_MIN });
 chrome.contextMenus?.onClicked.addListener(async (info) => {
   if (!info.menuItemId) return;
 
-  // směr
   if (info.menuItemId === "kd-sort-toggle") {
     const next = (sortDirCache === "asc") ? "desc" : "asc";
     await setSortDir(next);
@@ -412,7 +407,6 @@ chrome.contextMenus?.onClicked.addListener(async (info) => {
     await setSortDir("desc"); await resortAllWindows();
   }
 
-  // locale (UI + řazení)
   if (info.menuItemId === "kd-locale-auto") {
     await setLocale("auto"); await resortAllWindows();
   }
@@ -464,7 +458,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
       return;
     }
 
-    // 3) Původní chování: když přijde title u /posts*, taky přerovnej
+    // 3) fallback: když přijde title u /posts*, taky přerovnej
     const raw = (changeInfo.url ?? "") || tab?.pendingUrl || tab?.url || "";
     const candidateUrl = targetFromPlaceholder(raw) || raw;
     const becamePosts = !!changeInfo.url && isPostsUrl(candidateUrl);
@@ -554,7 +548,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 
   try {
     if (!ph) {
-      // placeholder zmizel → vytvoř rovnou cílovou kartu (onCreated ji případně zařadí)
+      // placeholder zmizel → vytvoř rovnou cílovou kartu
       const created = await chrome.tabs.create({ url: entry.url, active: false, openerTabId: entry.openerId || undefined });
       if (created?.id != null && created.windowId != null && isPostsUrl(entry.url)) {
         const gid = await groupTabIfPosts(created.id, created.windowId, entry.url);
@@ -616,47 +610,92 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  // --- DÁVKOVÉ HROMADNÉ OTEVÍRÁNÍ ---
   if (msg.type === "burstOpen") {
     const openerId = sender?.tab?.id || null;
     const winId    = sender?.tab?.windowId;
-    const urls     = Array.isArray(msg.urls) ? [...new Set(msg.urls)] : [];
-    const stepMs   = Math.max(200, Number(msg.stepMs || 1500));
+
+    const urlsRaw  = Array.isArray(msg.urls) ? msg.urls : [];
+    const urls     = [...new Set(urlsRaw)];
     const hardCap  = Math.min(250, urls.length);
     if (hardCap === 0) { sendResponse({ ok: false, error: "Nothing to open." }); return true; }
 
+    // Hustota převodu placeholder → cílová URL uvnitř dávky
+    const stepMs   = Math.max(200, Number(msg.stepMs || 1500));
+
+    // Dávky: kolik a jak často
+    const BATCH_SIZE        = Math.max(1, Math.min(50, Number(msg.batchSize || 10)));
+    const BATCH_INTERVAL_MS = Math.max(500, Number(msg.batchIntervalMs || 10000));
+
+    const queue = urls.slice(0, hardCap);
+    const total = queue.length;
+
     const pendingSet = sessions.get(openerId) || new Set();
     sessions.set(openerId, pendingSet);
-    const total = hardCap;
 
-    urls.slice(0, hardCap).forEach((targetUrl, i) => {
-      const delay = stepMs * (i + 1);
-      const ph = new URL(PLACEHOLDER_URL);
-      ph.searchParams.set("u", targetUrl);
-      ph.searchParams.set("d", String(delay));
-      ph.searchParams.set("i", String(i + 1));
-      ph.searchParams.set("n", String(total));
+    let createdTotal = 0;
+    let timer = null;
 
-      chrome.tabs.create(
-        { url: ph.href, active: false, openerTabId: openerId || undefined, windowId: winId },
-        async (tab) => {
-          const err = chrome.runtime.lastError;
-          if (err || !tab?.id) return;
+    const openOneBatch = () => {
+      if (!queue.length) {
+        if (timer) { clearInterval(timer); timer = null; }
+        return;
+      }
 
-          try { await chrome.tabs.update(tab.id, { autoDiscardable: false }); } catch {}
-          const alarmName = `burst:${tab.id}`;
-          chrome.alarms.create(alarmName, { when: Date.now() + delay });
-          await addMapping(tab.id, targetUrl, alarmName, openerId || undefined);
-          pendingSet.add(tab.id);
+      let inBatch = 0;
+      while (inBatch < BATCH_SIZE && queue.length) {
+        const targetUrl = queue.shift();
+        const ordinal   = ++createdTotal;
 
-          // placeholdery hned do samostatné zavřené skupiny
-          if (winId != null) {
-            try { await groupTabAsPlaceholder(tab.id, winId); } catch {}
+        const ph = new URL(PLACEHOLDER_URL);
+        ph.searchParams.set("u", targetUrl);
+        ph.searchParams.set("i", String(ordinal));
+        ph.searchParams.set("n", String(total));
+
+        // uvnitř dávky rozprostřít alarmy po stepMs
+        const perDelay = stepMs * (inBatch + 1);
+        ph.searchParams.set("d", String(perDelay));
+
+        chrome.tabs.create(
+          { url: ph.href, active: false, openerTabId: openerId || undefined, windowId: winId },
+          async (tab) => {
+            const err = chrome.runtime.lastError;
+            if (err || !tab?.id) return;
+
+            try { await chrome.tabs.update(tab.id, { autoDiscardable: true }); } catch {}
+            const alarmName = `burst:${tab.id}`;
+            chrome.alarms.create(alarmName, { when: Date.now() + perDelay });
+
+            try { await addMapping(tab.id, targetUrl, alarmName, openerId || undefined); } catch {}
+            pendingSet.add(tab.id);
+
+            // placeholdery do zavřené skupiny
+            if (winId != null) {
+              try { await groupTabAsPlaceholder(tab.id, winId); } catch {}
+            }
           }
-        }
-      );
-    });
+        );
 
-    sendResponse({ ok: true, created: total });
+        inBatch++;
+      }
+
+      if (!queue.length && timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+    };
+
+    // spustit první dávku hned a další po intervalu
+    openOneBatch();
+    timer = setInterval(openOneBatch, BATCH_INTERVAL_MS);
+
+    sendResponse({
+      ok: true,
+      enqueued: total,
+      batchSize: BATCH_SIZE,
+      batchIntervalMs: BATCH_INTERVAL_MS,
+      stepMs
+    });
     return true;
   }
 
