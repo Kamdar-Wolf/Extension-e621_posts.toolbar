@@ -1,3 +1,14 @@
+/*  ======================================================================
+    RYCHLÉ ZKRATKY (můžeš si je uložit do .vscode/keybindings.json — viz návod níž)
+      Alt+0          = Sbalit vše
+      Alt+Shift+0    = Rozbalit vše
+      Alt+9          = Sbalit všechny //#region bloky
+      Alt+Shift+9    = Rozbalit všechny //#region bloky
+      Ctrl+Alt+[     = Sbalit aktuální blok
+      Ctrl+Alt+]     = Rozbalit aktuální blok
+    ====================================================================== */
+
+//#region Konstanty / globální stav
 // background.js
 
 // ============= konstanty / globální stav =============
@@ -39,7 +50,9 @@ const LOCALE_KEY = "kd_sort_locale";     // "auto" | "cs" | "en"
 const LOCALE_DEFAULT = "auto";
 let localeCache = LOCALE_DEFAULT;
 let acceptLangs = [];
+//#endregion
 
+//#region Storage helpery (mapy, nastavení)
 // ============= pomocné funkce: storage =============
 async function getMap() {
   const o = await chrome.storage.local.get(MAP_KEY);
@@ -101,7 +114,9 @@ chrome.storage.onChanged.addListener((changes, area) => {
     broadcastUiLocale();
   }
 });
+//#endregion
 
+//#region URL/API/Locale helpery
 // ============= pomocné: URL / API / locale =============
 function hasTabGroupsAPI() {
   return !!(chrome.tabs?.group) && !!chrome.tabGroups;
@@ -174,7 +189,9 @@ async function broadcastUiLocale() {
     }
   } catch {}
 }
+//#endregion
 
+//#region Skupiny karet (e6 a „e6 (čeká)”)
 // ============= práce se skupinou =============
 async function ensureSingleGroup(windowId) {
   if (!hasTabGroupsAPI()) return null;
@@ -277,7 +294,9 @@ async function groupTabAsPlaceholder(tabId, windowId) {
   }
   return gid;
 }
+//#endregion
 
+//#region Řazení tabů ve skupině
 // ============= řazení =============
 function scheduleGroupSort(groupId, windowId) {
   if (!hasTabGroupsAPI()) return;
@@ -327,7 +346,9 @@ async function resortAllWindows() {
     if (gid != null) await sortGroupByTitle(gid, w.id);
   }
 }
+//#endregion
 
+//#region Bootstrap (alarmy, menu, zkratky)
 // ============= bootstrap: alarmy, menu, zkratky =============
 // sběr jazyků pro „Auto“
 chrome.i18n?.getAcceptLanguages?.((langs) => { acceptLangs = Array.isArray(langs) ? langs : []; });
@@ -424,7 +445,9 @@ chrome.action?.onClicked.addListener(async () => {
   await setSortDir(next);
   await resortAllWindows();
 });
+//#endregion
 
+//#region Události (tabs, groups, runtime)
 // ============= životní cyklus / události =============
 
 // Úklid mapy, když se placeholder zavře
@@ -528,7 +551,9 @@ if (chrome.tabGroups?.onUpdated) {
     }
   });
 }
+//#endregion
 
+//#region Alarmy (burst + údržba)
 // ============= budíky: burst placeholdery + údržba =============
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === MAINT_ALARM) {
@@ -570,7 +595,9 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     await removeMapping(phId);
   }
 });
+//#endregion
 
+//#region Messaging API (UI, hotkeys)
 // ============= messaging API (pro UI / hotkeys) =============
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || !msg.type) return;
@@ -610,6 +637,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  //#region burstOpen – dávkové hromadné otevírání
   // --- DÁVKOVÉ HROMADNÉ OTEVÍRÁNÍ ---
   if (msg.type === "burstOpen") {
     const openerId = sender?.tab?.id || null;
@@ -698,6 +726,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     });
     return true;
   }
+  //#endregion
 
   if (msg.type === "setSortOrder") {
     const v = (msg.dir === "desc") ? "desc" : "asc";
@@ -727,7 +756,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 });
+//#endregion
 
+//#region Klávesové příkazy (pro Edge/Chrome zkratky)
 // ============= klávesové příkazy (nastav v edge://extensions/shortcuts) =============
 chrome.commands?.onCommand.addListener(async (command) => {
   if (command === "toggle-sort") {
@@ -742,3 +773,4 @@ chrome.commands?.onCommand.addListener(async (command) => {
     await resortAllWindows();
   }
 });
+//#endregion
