@@ -4,12 +4,12 @@
   "version": "6.2.1",
   "description": "Otevírání/stahování ze stránek s cestou /posts*. CZ/EN UI, delay/limit, volba složky (FS API) + fallback do Stažené, spodní fixní lišta. Burst/placeholder režim.",
   "permissions": [
+	"contextMenus",
     "downloads",
     "storage",
     "tabs",
     "alarms",
-    "tabGroups",
-    "contextMenus"
+    "tabGroups"
   ],
   "background": { "service_worker": "background.js" },
 
