@@ -1,5 +1,5 @@
-/*  ======================================================================
-    RYCHLÉ ZKRATKY (můžeš si je uložit do .vscode/keybindings.json — viz návod níž)
+/*  ====================================================================== 
+    RYCHLÉ ZKRATKY (tahák do VS Code)
       Alt+0          = Sbalit vše
       Alt+Shift+0    = Rozbalit vše
       Alt+9          = Sbalit všechny //#region bloky
@@ -21,19 +21,12 @@ const MAP_KEY = "kd_burst_map"; // { [tabId]: { url, alarmName, openerId? } }
 const sessions = new Map();
 // windowId -> tabGroupId (jediná skupina "e6" v daném okně)
 const groupCache = new Map();
-// windowId -> tabGroupId (skupina "e6 (čeká)")
-const phGroupCache = new Map();
 // groupId -> debounce časovač pro řazení
 const sortTimers = new Map();
 
 // Vzhled skupiny (barvy: "blue","red","yellow","green","pink","purple","cyan","orange","grey")
 const GROUP_TITLE = "e6";
 const GROUP_COLOR = "blue";
-
-// --- skupina pro placeholdery ---
-const PH_GROUP_TITLE = "e6 (čeká)";
-const PH_GROUP_COLOR = "grey";
-const PH_GROUP_COLLAPSED = true;
 
 // --- UI locale (pro celé UI rozšíření) ---
 const SUPPORTED_LOCALES = ["en", "cs"]; // můžeš rozšířit např. o "es"
@@ -50,10 +43,28 @@ const LOCALE_KEY = "kd_sort_locale";     // "auto" | "cs" | "en"
 const LOCALE_DEFAULT = "auto";
 let localeCache = LOCALE_DEFAULT;
 let acceptLangs = [];
+
+// --- Burst konfigurace (nastavitelná z UI) ---
+const BURST_SIZE_KEY     = "kd_burst_size";
+const BURST_INTERVAL_KEY = "kd_burst_interval_ms";
+const BURST_STEP_KEY     = "kd_burst_step_ms";
+
+const BURST_SIZE_DEFAULT     = 1;     // počet placeholderů v dávce
+const BURST_INTERVAL_DEFAULT = 2000;  // ms mezi dávkami (>=500)
+const BURST_STEP_DEFAULT     = 1500;  // ms rozprostření uvnitř dávky (>=200)
+
+// Průběh pro každý openerId: { total, created, opened }
+const progressMap = new Map();
+
+// Aktivní běhy (kvůli STOP): openerId -> { timer, queueLeft }
+const runState = new Map();
+
+// --- SFW filtr (doplnění ?sfw=1 do všech odkazů na e6*.net) ---
+const SFW_QUERY_KEY = "sfw";
+const SFW_QUERY_VALUE = "1";
 //#endregion
 
 //#region Storage helpery (mapy, nastavení)
-// ============= pomocné funkce: storage =============
 async function getMap() {
   const o = await chrome.storage.local.get(MAP_KEY);
   return o[MAP_KEY] || {};
@@ -103,6 +114,24 @@ async function setLocale(v) {
   return val;
 }
 
+// --- Burst config get/set ---
+async function loadBurstConfig() {
+  const o = await chrome.storage.local.get([BURST_SIZE_KEY, BURST_INTERVAL_KEY, BURST_STEP_KEY]);
+  return {
+    size:       Number.isFinite(o[BURST_SIZE_KEY])     ? Math.max(1, Math.min(50, Number(o[BURST_SIZE_KEY]))) : BURST_SIZE_DEFAULT,
+    intervalMs: Number.isFinite(o[BURST_INTERVAL_KEY]) ? Math.max(500, Number(o[BURST_INTERVAL_KEY]))         : BURST_INTERVAL_DEFAULT,
+    stepMs:     Number.isFinite(o[BURST_STEP_KEY])     ? Math.max(200, Number(o[BURST_STEP_KEY]))             : BURST_STEP_DEFAULT,
+  };
+}
+async function setBurstConfig({ size, intervalMs, stepMs }) {
+  const payload = {};
+  if (size != null)       payload[BURST_SIZE_KEY]     = Math.max(1, Math.min(50, Number(size)));
+  if (intervalMs != null) payload[BURST_INTERVAL_KEY] = Math.max(500, Number(intervalMs));
+  if (stepMs != null)     payload[BURST_STEP_KEY]     = Math.max(200, Number(stepMs));
+  await chrome.storage.local.set(payload);
+  return loadBurstConfig();
+}
+
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local") return;
   if (changes[SORT_KEY]) {
@@ -117,12 +146,38 @@ chrome.storage.onChanged.addListener((changes, area) => {
 //#endregion
 
 //#region URL/API/Locale helpery
-// ============= pomocné: URL / API / locale =============
 function hasTabGroupsAPI() {
   return !!(chrome.tabs?.group) && !!chrome.tabGroups;
 }
 
-// Odpovídá include_globs ["*/posts*", "*/posts/*"]
+// --- Host a cesty e6*.net ---
+function isE6Host(hostname) {
+  return /^e6[\w-]*\.net$/i.test(hostname || "");
+}
+
+// /posts přesně (listing; povolen i trailing slash a query)
+function isPostsListing(u) {
+  try {
+    const url = new URL(u, "https://dummy.local");
+    if (!isE6Host(url.hostname)) return false;
+    return /^\/posts\/?$/.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
+// /posts/<číslo> (detail; povolen i trailing slash)
+function isPostDetail(u) {
+  try {
+    const url = new URL(u, "https://dummy.local");
+    if (!isE6Host(url.hostname)) return false;
+    return /^\/posts\/\d+\/?$/.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
+// (historické) odpovídá include_globs ["*/posts*", "*/posts/*"] — zůstává, ale pro seskupování už NEpoužíváme
 function isPostsUrl(u) {
   try {
     const url = new URL(u, "https://dummy.local");
@@ -191,12 +246,10 @@ async function broadcastUiLocale() {
 }
 //#endregion
 
-//#region Skupiny karet (e6 a „e6 (čeká)”)
-// ============= práce se skupinou =============
+//#region Skupiny karet (e6 – jediná hlavní)
 async function ensureSingleGroup(windowId) {
   if (!hasTabGroupsAPI()) return null;
 
-  // cache (ověřit existenci)
   if (groupCache.has(windowId)) {
     const cached = groupCache.get(windowId);
     try {
@@ -207,7 +260,6 @@ async function ensureSingleGroup(windowId) {
     }
   }
 
-  // najít podle názvu
   try {
     const groups = await chrome.tabGroups.query({ windowId });
     const hit = groups.find(g => (g.title || "").toLowerCase() === GROUP_TITLE);
@@ -220,40 +272,10 @@ async function ensureSingleGroup(windowId) {
   return null; // vytvoří se při prvním seskupení
 }
 
-// zajisti (nebo najdi) skupinu pro placeholdery
-async function ensurePlaceholderGroup(windowId) {
-  if (!hasTabGroupsAPI()) return null;
-
-  if (phGroupCache.has(windowId)) {
-    const cached = phGroupCache.get(windowId);
-    try {
-      const g = await chrome.tabGroups.get(cached);
-      if (g && g.windowId === windowId) {
-        try { await chrome.tabGroups.update(g.id, { title: PH_GROUP_TITLE, color: PH_GROUP_COLOR, collapsed: PH_GROUP_COLLAPSED }); } catch {}
-        return g.id;
-      }
-    } catch {
-      phGroupCache.delete(windowId);
-    }
-  }
-
-  try {
-    const groups = await chrome.tabGroups.query({ windowId });
-    const hit = groups.find(g => (g.title || "") === PH_GROUP_TITLE);
-    if (hit) {
-      phGroupCache.set(windowId, hit.id);
-      try { await chrome.tabGroups.update(hit.id, { color: PH_GROUP_COLOR, collapsed: PH_GROUP_COLLAPSED }); } catch {}
-      return hit.id;
-    }
-  } catch {}
-
-  return null; // vytvoří se při prvním seskupení
-}
-
-// Seskup kartu do jediné skupiny v okně (jen když cíl je /posts*)
+// Seskup kartu do jediné skupiny v okně (jen když cíl je /posts/<id>)
 async function groupTabIfPosts(tabId, windowId, targetUrl) {
   if (!hasTabGroupsAPI()) return null;
-  if (!isPostsUrl(targetUrl)) return null;
+  if (!isPostDetail(targetUrl)) return null; // <-- jen detail, nikoli listing
 
   let gid = await ensureSingleGroup(windowId);
   try {
@@ -273,31 +295,46 @@ async function groupTabIfPosts(tabId, windowId, targetUrl) {
   return gid;
 }
 
-// seskup kartu do placeholderové skupiny (vždy zavřené)
-async function groupTabAsPlaceholder(tabId, windowId) {
+// Dej libovolný TAB do hlavní skupiny "e6" a šoupni ho na konec skupiny
+async function groupTabToMainEnd(tabId, windowId) {
   if (!hasTabGroupsAPI()) return null;
 
-  let gid = await ensurePlaceholderGroup(windowId);
+  let gid = await ensureSingleGroup(windowId);
   try {
-    if (gid != null) {
-      await chrome.tabs.group({ groupId: gid, tabIds: tabId });
-      try { await chrome.tabGroups.update(gid, { collapsed: PH_GROUP_COLLAPSED }); } catch {}
-    } else {
+    if (gid == null) {
       gid = await chrome.tabs.group({ tabIds: tabId });
-      phGroupCache.set(windowId, gid);
-      try {
-        await chrome.tabGroups.update(gid, { title: PH_GROUP_TITLE, color: PH_GROUP_COLOR, collapsed: PH_GROUP_COLLAPSED });
-      } catch {}
+      groupCache.set(windowId, gid);
+      try { await chrome.tabGroups.update(gid, { title: GROUP_TITLE, color: GROUP_COLOR, collapsed: false }); } catch {}
+    } else {
+      await chrome.tabs.group({ groupId: gid, tabIds: tabId });
     }
+
+    try {
+      const inGroup = await chrome.tabs.query({ windowId, groupId: gid });
+      if (inGroup.length) {
+        const lastIndex = Math.max(...inGroup.map(t => t.index));
+        await chrome.tabs.move(tabId, { index: lastIndex + 1 });
+        await chrome.tabs.group({ groupId: gid, tabIds: tabId });
+      }
+    } catch {}
   } catch {
     return null;
   }
   return gid;
 }
+
+// Explicitní odskupení karty (použito pro /posts listing)
+async function ensureUngrouped(tabId) {
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    if (tab?.groupId && tab.groupId !== -1) {
+      await chrome.tabs.ungroup([tabId]);
+    }
+  } catch {}
+}
 //#endregion
 
 //#region Řazení tabů ve skupině
-// ============= řazení =============
 function scheduleGroupSort(groupId, windowId) {
   if (!hasTabGroupsAPI()) return;
   if (groupId == null || groupId === -1) return;
@@ -307,7 +344,6 @@ function scheduleGroupSort(groupId, windowId) {
   sortTimers.set(groupId, t);
 }
 
-// Seřaď uvnitř skupiny jen /posts* karty dle title/url, A→Z nebo Z→A a dle zvoleného jazyka
 async function sortGroupByTitle(groupId, windowId) {
   if (!hasTabGroupsAPI() || groupId == null || groupId === -1) return;
 
@@ -321,7 +357,7 @@ async function sortGroupByTitle(groupId, windowId) {
     const raw = t.pendingUrl || t.url || "";
     const fromPH = targetFromPlaceholder(raw);
     const target = fromPH || raw;
-    return isPostsUrl(target);
+    return isPostDetail(target); // řadíme jen detaily /posts/<id>
   });
   if (postsTabs.length < 2) return;
 
@@ -336,7 +372,6 @@ async function sortGroupByTitle(groupId, windowId) {
   }
 }
 
-// Přerovnej ve všech oknech (periodická údržba)
 async function resortAllWindows() {
   if (!hasTabGroupsAPI()) return;
   let windows = [];
@@ -348,98 +383,120 @@ async function resortAllWindows() {
 }
 //#endregion
 
+//#region SFW injekce (přepisovač odkazů e6*.net)
+async function injectSfwLinkRewriter(tabId) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      world: "MAIN",
+      func: (SFW_QUERY_KEY, SFW_QUERY_VALUE) => {
+        const isE6Host = (host) => /^e6[\w-]*\.net$/i.test(host || "");
+
+        const tagLink = (a) => {
+          try {
+            const href = a.getAttribute("href");
+            if (!href) return;
+            const u = new URL(href, location.href);
+            if (!isE6Host(u.hostname)) return;
+
+            if (u.searchParams.get(SFW_QUERY_KEY) !== SFW_QUERY_VALUE) {
+              u.searchParams.set(SFW_QUERY_KEY, SFW_QUERY_VALUE);
+              // zachovej relativitu, pokud byla
+              if (/^https?:\/\//i.test(href)) {
+                a.setAttribute("href", u.toString());
+              } else {
+                a.setAttribute("href", u.pathname + u.search + u.hash);
+              }
+            }
+          } catch {}
+        };
+
+        const processAll = (root = document) => {
+          root.querySelectorAll("a[href]").forEach(tagLink);
+        };
+
+        // prvotní průchod
+        processAll(document);
+
+        // dynamika (SPA / endless scroll)
+        const mo = new MutationObserver((mutList) => {
+          for (const m of mutList) {
+            if (m.type === "childList") {
+              m.addedNodes.forEach((n) => {
+                if (n.nodeType === 1) {
+                  if (n.tagName === "A" && n.hasAttribute("href")) {
+                    tagLink(n);
+                  } else {
+                    processAll(n);
+                  }
+                }
+              });
+            } else if (m.type === "attributes"
+                       && m.target?.tagName === "A"
+                       && m.attributeName === "href") {
+              tagLink(m.target);
+            }
+          }
+        });
+        mo.observe(document.documentElement, {
+          childList: true,
+          subtree: true,
+          attributes: true,
+          attributeFilter: ["href"]
+        });
+
+        // případně web může respektovat i localStorage
+        try { localStorage.setItem(SFW_QUERY_KEY, SFW_QUERY_VALUE); } catch {}
+      },
+      args: [SFW_QUERY_KEY, SFW_QUERY_VALUE],
+    });
+  } catch {}
+}
+//#endregion
+
 //#region Bootstrap (alarmy, menu, zkratky)
-// ============= bootstrap: alarmy, menu, zkratky =============
-// sběr jazyků pro „Auto“
 chrome.i18n?.getAcceptLanguages?.((langs) => { acceptLangs = Array.isArray(langs) ? langs : []; });
 
-// inicializace
 chrome.runtime.onInstalled.addListener(async () => {
   await Promise.all([loadSortDir(), loadLocale()]).catch(() => {});
   try {
     chrome.contextMenus.removeAll(() => {
-      // přepnutí směru
-      chrome.contextMenus.create({
-        id: "kd-sort-toggle",
-        title: "Přepnout řazení skupiny e6 (A↔Z, 1↔9)",
-        contexts: ["action", "page"]
-      });
-      chrome.contextMenus.create({
-        id: "kd-sort-asc",
-        title: "Řadit A → Z (1→9)",
-        contexts: ["action", "page"]
-      });
-      chrome.contextMenus.create({
-        id: "kd-sort-desc",
-        title: "Řadit Z → A (9→1)",
-        contexts: ["action", "page"]
-      });
+      chrome.contextMenus.create({ id: "kd-sort-toggle", title: "Přepnout řazení skupiny e6 (A↔Z, 1↔9)", contexts: ["action", "page"] });
+      chrome.contextMenus.create({ id: "kd-sort-asc",    title: "Řadit A → Z (1→9)", contexts: ["action", "page"] });
+      chrome.contextMenus.create({ id: "kd-sort-desc",   title: "Řadit Z → A (9→1)", contexts: ["action", "page"] });
 
-      // volba jazyka řazení + UI
-      chrome.contextMenus.create({
-        id: "kd-locale-header",
-        title: "Jazyk (UI + řazení)",
-        contexts: ["action", "page"],
-        enabled: false
-      });
-      chrome.contextMenus.create({
-        id: "kd-locale-auto",
-        title: "Auto (podle prohlížeče)",
-        contexts: ["action", "page"]
-      });
-      chrome.contextMenus.create({
-        id: "kd-locale-cs",
-        title: "Čeština",
-        contexts: ["action", "page"]
-      });
-      chrome.contextMenus.create({
-        id: "kd-locale-en",
-        title: "Angličtina",
-        contexts: ["action", "page"]
-      });
+      chrome.contextMenus.create({ id: "kd-locale-header", title: "Jazyk (UI + řazení)", contexts: ["action", "page"], enabled: false });
+      chrome.contextMenus.create({ id: "kd-locale-auto",   title: "Auto (podle prohlížeče)", contexts: ["action", "page"] });
+      chrome.contextMenus.create({ id: "kd-locale-cs",     title: "Čeština", contexts: ["action", "page"] });
+      chrome.contextMenus.create({ id: "kd-locale-en",     title: "Angličtina", contexts: ["action", "page"] });
     });
   } catch {}
 
   try { await broadcastUiLocale(); } catch {}
 });
 
-// po startu prohlížeče obnov a pošli locale
 chrome.runtime.onStartup?.addListener(async () => {
   await loadLocale().catch(()=>{});
   await broadcastUiLocale();
 });
 
-// periodický alarm
 chrome.alarms.create(MAINT_ALARM, { periodInMinutes: MAINT_PERIOD_MIN });
 
-// reakce na menu
 chrome.contextMenus?.onClicked.addListener(async (info) => {
   if (!info.menuItemId) return;
 
   if (info.menuItemId === "kd-sort-toggle") {
     const next = (sortDirCache === "asc") ? "desc" : "asc";
-    await setSortDir(next);
-    await resortAllWindows();
+    await setSortDir(next); await resortAllWindows();
   }
-  if (info.menuItemId === "kd-sort-asc") {
-    await setSortDir("asc"); await resortAllWindows();
-  }
-  if (info.menuItemId === "kd-sort-desc") {
-    await setSortDir("desc"); await resortAllWindows();
-  }
+  if (info.menuItemId === "kd-sort-asc")  { await setSortDir("asc");  await resortAllWindows(); }
+  if (info.menuItemId === "kd-sort-desc") { await setSortDir("desc"); await resortAllWindows(); }
 
-  if (info.menuItemId === "kd-locale-auto") {
-    await setLocale("auto"); await resortAllWindows();
-  }
-  if (info.menuItemId === "kd-locale-cs") {
-    await setLocale("cs"); await resortAllWindows();
-  }
-  if (info.menuItemId === "kd-locale-en") {
-    await setLocale("en"); await resortAllWindows();
-  }
+  if (info.menuItemId === "kd-locale-auto") { await setLocale("auto"); await resortAllWindows(); }
+  if (info.menuItemId === "kd-locale-cs")   { await setLocale("cs");   await resortAllWindows(); }
+  if (info.menuItemId === "kd-locale-en")   { await setLocale("en");   await resortAllWindows(); }
 });
 
-// klik na ikonu rozšíření (když není popup) → přepnout A↔Z
 chrome.action?.onClicked.addListener(async () => {
   const next = (sortDirCache === "asc") ? "desc" : "asc";
   await setSortDir(next);
@@ -448,9 +505,6 @@ chrome.action?.onClicked.addListener(async () => {
 //#endregion
 
 //#region Události (tabs, groups, runtime)
-// ============= životní cyklus / události =============
-
-// Úklid mapy, když se placeholder zavře
 chrome.tabs.onRemoved.addListener(async (tabId) => {
   const map = await getMap();
   if (map[tabId]) await removeMapping(tabId);
@@ -460,7 +514,6 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
   }
 });
 
-// Rozhodujeme podle SKUTEČNÉ URL, ne podle u= v placeholderu
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   try {
     const winId = tab?.windowId;
@@ -468,31 +521,47 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 
     const current = (changeInfo.url ?? "") || tab?.url || tab?.pendingUrl || "";
 
-    // 1) Placeholder drž ve vlastní (zavřené) skupině
+    // SFW injekce pro všechny stránky na e6*.net po dokončení načtení nebo změně URL
+    try {
+      const u = new URL(current);
+      if (isE6Host(u.hostname) && (changeInfo.status === "complete" || changeInfo.url)) {
+        await injectSfwLinkRewriter(tabId);
+      }
+    } catch {}
+
     if (isPlaceholderUrl(current)) {
-      await groupTabAsPlaceholder(tabId, winId);
+      await groupTabToMainEnd(tabId, winId);
       return;
     }
 
-    // 2) Jakmile se načte /posts*, přesun (nebo vytvoření) do e6 + řazení
-    if (changeInfo.url && isPostsUrl(changeInfo.url)) {
+    // Pokud nově míří na listing /posts — výslovně odskupit
+    if (changeInfo.url && isPostsListing(changeInfo.url)) {
+      await ensureUngrouped(tabId);
+      return;
+    }
+
+    // Pokud nově míří na detail /posts/<id> — zařadit do skupiny
+    if (changeInfo.url && isPostDetail(changeInfo.url)) {
       const gid = await groupTabIfPosts(tabId, winId, changeInfo.url);
       scheduleGroupSort(gid ?? (tab.groupId ?? -1), winId);
       return;
     }
 
-    // 3) fallback: když přijde title u /posts*, taky přerovnej
     const raw = (changeInfo.url ?? "") || tab?.pendingUrl || tab?.url || "";
     const candidateUrl = targetFromPlaceholder(raw) || raw;
-    const becamePosts = !!changeInfo.url && isPostsUrl(candidateUrl);
-    const titleArrived = !!changeInfo.title;
+    const becamePostDetail = !!changeInfo.url && isPostDetail(candidateUrl);
+    const becameListing    = !!changeInfo.url && isPostsListing(candidateUrl);
+    const titleArrived     = !!changeInfo.title;
 
-    if ((becamePosts || titleArrived) && isPostsUrl(candidateUrl)) {
+    if (becameListing) {
+      await ensureUngrouped(tabId);
+    }
+
+    if ((becamePostDetail || titleArrived) && isPostDetail(candidateUrl)) {
       const gid = await groupTabIfPosts(tabId, winId, candidateUrl);
       scheduleGroupSort(gid ?? (tab.groupId ?? -1), winId);
     }
 
-    // Úklid mapy, když placeholder odplul jinam
     if (changeInfo.url && !isPlaceholderUrl(changeInfo.url)) {
       await removeMapping(tabId);
       for (const [openerId, set] of sessions) {
@@ -502,19 +571,33 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   } catch {}
 });
 
-// Nové karty — placeholdery do vlastní skupiny, posts* do e6
 chrome.tabs.onCreated.addListener(async (tab) => {
   try {
     const winId = tab.windowId;
     const raw = tab.pendingUrl || tab.url || "";
     if (winId == null) return;
 
+    // pokus o SFW injekci i při rychlé inicializaci
+    try {
+      const u = new URL(raw);
+      if (isE6Host(u.hostname)) {
+        await injectSfwLinkRewriter(tab.id);
+      }
+    } catch {}
+
     if (isPlaceholderUrl(raw)) {
-      await groupTabAsPlaceholder(tab.id, winId);
+      await groupTabToMainEnd(tab.id, winId);
       return;
     }
 
     const target = targetFromPlaceholder(raw) || raw;
+
+    // listing /posts: nedávej do skupin
+    if (isPostsListing(target)) {
+      await ensureUngrouped(tab.id);
+      return;
+    }
+
     const gid = await groupTabIfPosts(tab.id, winId, target);
     scheduleGroupSort(gid ?? (tab.groupId ?? -1), winId);
   } catch {}
@@ -538,23 +621,57 @@ chrome.tabs.onAttached.addListener(async (tabId, attachInfo) => {
 });
 chrome.tabs.onDetached.addListener(() => {});
 
-// Udrž placeholderovou skupinu zavřenou a v cache
 if (chrome.tabGroups?.onUpdated) {
   chrome.tabGroups.onUpdated.addListener(async (group) => {
     if ((group.title || "").toLowerCase() === GROUP_TITLE) {
       groupCache.set(group.windowId, group.id);
       scheduleGroupSort(group.id, group.windowId);
     }
-    if ((group.title || "") === PH_GROUP_TITLE) {
-      phGroupCache.set(group.windowId, group.id);
-      try { await chrome.tabGroups.update(group.id, { color: PH_GROUP_COLOR, collapsed: PH_GROUP_COLLAPSED }); } catch {}
-    }
   });
 }
 //#endregion
 
+//#region SPA fallback injekce (webNavigation)
+(function setupWebNavigationFallback() {
+  if (!chrome.webNavigation) return;
+
+  const isE6Host = (h) => /^e6[\w-]*\.net$/i.test(h || "");
+  const wantsInject = (urlStr) => {
+    try {
+      const u = new URL(urlStr);
+      if (!isE6Host(u.hostname)) return false;
+      // injektujeme na všech e6 stránkách (zvlášť /posts a /posts/<id>)
+      return true;
+    } catch { return false; }
+  };
+
+  const safeInject = async (tabId) => {
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId, allFrames: true },
+        world: "MAIN",
+        files: ["content/sfw-link-rewriter.js"]
+      });
+    } catch { /* no-op */ }
+  };
+
+  // Při přechodu přes History API (SPA)
+  chrome.webNavigation.onHistoryStateUpdated.addListener(async (details) => {
+    if (details.tabId == null) return;
+    if (!wantsInject(details.url)) return;
+    await safeInject(details.tabId);
+  });
+
+  // Při potvrzené navigaci (top-level i subframes)
+  chrome.webNavigation.onCommitted.addListener(async (details) => {
+    if (details.tabId == null) return;
+    if (!wantsInject(details.url)) return;
+    await safeInject(details.tabId);
+  });
+})();
+//#endregion
+
 //#region Alarmy (burst + údržba)
-// ============= budíky: burst placeholdery + údržba =============
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === MAINT_ALARM) {
     await resortAllWindows();
@@ -571,25 +688,49 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   let ph = null;
   try { ph = await chrome.tabs.get(phId); } catch {}
 
+  const openerId = entry.openerId || openerForPlaceholder(phId) || null;
+
+  const bumpOpened = async () => {
+    if (openerId != null) {
+      const st = progressMap.get(openerId);
+      if (st) {
+        st.opened = Math.min(st.total, (st.opened || 0) + 1);
+        progressMap.set(openerId, st);
+        try { await chrome.tabs.sendMessage(openerId, { type: "burstProgress", total: st.total, created: st.created || 0, opened: st.opened }); } catch {}
+        if (st.opened >= st.total) {
+          try { await chrome.tabs.sendMessage(openerId, { type: "burstDone", total: st.total }); } catch {}
+          progressMap.delete(openerId);
+          sessions.delete(openerId);
+          runState.delete(openerId);
+        }
+      }
+    }
+  };
+
   try {
     if (!ph) {
-      // placeholder zmizel → vytvoř rovnou cílovou kartu
-      const created = await chrome.tabs.create({ url: entry.url, active: false, openerTabId: entry.openerId || undefined });
-      if (created?.id != null && created.windowId != null && isPostsUrl(entry.url)) {
+      const created = await chrome.tabs.create({ url: entry.url, active: false, openerTabId: openerId || undefined });
+      if (created?.id != null && created.windowId != null && isPostDetail(entry.url)) {
         const gid = await groupTabIfPosts(created.id, created.windowId, entry.url);
         scheduleGroupSort(gid ?? (created.groupId ?? -1), created.windowId);
+      } else if (created?.id != null) {
+        try { const u = new URL(entry.url); if (isE6Host(u.hostname)) await injectSfwLinkRewriter(created.id); } catch {}
       }
+      await bumpOpened();
     } else if (ph.discarded || ph.status === "unloaded") {
-      // placeholder odložen → vytvoř novou kartu a placeholder zavři
-      const created = await chrome.tabs.create({ url: entry.url, active: false, openerTabId: entry.openerId || openerForPlaceholder(phId) || undefined });
+      const created = await chrome.tabs.create({ url: entry.url, active: false, openerTabId: openerId || undefined });
       try { await chrome.tabs.remove(phId); } catch {}
-      if (created?.id != null && created.windowId != null && isPostsUrl(entry.url)) {
+      if (created?.id != null && created.windowId != null && isPostDetail(entry.url)) {
         const gid = await groupTabIfPosts(created.id, created.windowId, entry.url);
         scheduleGroupSort(gid ?? (created.groupId ?? -1), created.windowId);
+      } else if (created?.id != null) {
+        try { const u = new URL(entry.url); if (isE6Host(u.hostname)) await injectSfwLinkRewriter(created.id); } catch {}
       }
+      await bumpOpened();
     } else {
-      // převeď EXISTUJÍCÍ placeholder na cílovou URL → onUpdated ho přesune do e6
       await chrome.tabs.update(phId, { url: entry.url });
+      try { const u = new URL(entry.url); if (isE6Host(u.hostname)) await injectSfwLinkRewriter(phId); } catch {}
+      await bumpOpened();
     }
   } finally {
     await removeMapping(phId);
@@ -597,8 +738,42 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 });
 //#endregion
 
+//#region Pomocné: STOP běhu
+async function stopBurstFor(openerId) {
+  const st = runState.get(openerId);
+  if (st?.timer) {
+    try { clearInterval(st.timer); } catch {}
+  }
+  runState.delete(openerId);
+
+  // Zruš alarmy + zavři placeholdery napojené na tohoto openerId
+  const map = await getMap();
+  const toDelete = [];
+  for (const [tabIdStr, entry] of Object.entries(map)) {
+    if (entry?.openerId === openerId) {
+      if (entry.alarmName) {
+        try { await chrome.alarms.clear(entry.alarmName); } catch {}
+      }
+      try {
+        const tid = Number(tabIdStr);
+        const t = await chrome.tabs.get(tid).catch(()=>null);
+        if (t && isPlaceholderUrl(t.url || t.pendingUrl || "")) {
+          await chrome.tabs.remove(tid).catch(()=>{});
+        }
+      } catch {}
+      toDelete.push(tabIdStr);
+    }
+  }
+  for (const id of toDelete) delete map[id];
+  await setMap(map);
+
+  sessions.delete(openerId);
+  progressMap.delete(openerId);
+  try { await chrome.tabs.sendMessage(openerId, { type: "burstDone", total: 0 }); } catch {}
+}
+//#endregion
+
 //#region Messaging API (UI, hotkeys)
-// ============= messaging API (pro UI / hotkeys) =============
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || !msg.type) return;
 
@@ -612,9 +787,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
-  // content skripty si vyžádají UI jazyk
   if (msg.type === "getUiLocale") {
     sendResponse({ ok: true, locale: resolveUiLocale() });
+    return true;
+  }
+
+  // Burst konfigurace
+  if (msg.type === "getBurstConfig") {
+    loadBurstConfig()
+      .then(cfg => sendResponse({ ok: true, config: cfg }))
+      .catch(err => sendResponse({ ok: false, error: String(err) }));
+    return true;
+  }
+  if (msg.type === "setBurstConfig") {
+    setBurstConfig({ size: msg.size, intervalMs: msg.intervalMs, stepMs: msg.stepMs })
+      .then(cfg => sendResponse({ ok: true, config: cfg }))
+      .catch(err => sendResponse({ ok: false, error: String(err) }));
     return true;
   }
 
@@ -627,18 +815,23 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse(ok ? { ok: true, tabId: tab.id } : { ok: false, error: err?.message || "create failed" });
       if (ok && winId != null) {
         try {
-          if (isPostsUrl(msg.url)) {
+          if (isPostDetail(msg.url)) {
             const gid = await groupTabIfPosts(tab.id, winId, msg.url);
             scheduleGroupSort(gid ?? (tab.groupId ?? -1), winId);
+          } else if (isPostsListing(msg.url)) {
+            await ensureUngrouped(tab.id); // listing neřadit
+          } else {
+            await groupTabToMainEnd(tab.id, winId);
           }
+          // SFW injekce pro e6 host
+          try { const u = new URL(msg.url); if (isE6Host(u.hostname)) await injectSfwLinkRewriter(tab.id); } catch {}
         } catch {}
       }
     });
     return true;
   }
 
-  //#region burstOpen – dávkové hromadné otevírání
-  // --- DÁVKOVÉ HROMADNÉ OTEVÍRÁNÍ ---
+  // --- HROMADNÉ OTEVÍRÁNÍ (sekvenční režim odstraněn) ---
   if (msg.type === "burstOpen") {
     const openerId = sender?.tab?.id || null;
     const winId    = sender?.tab?.windowId;
@@ -648,85 +841,103 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const hardCap  = Math.min(250, urls.length);
     if (hardCap === 0) { sendResponse({ ok: false, error: "Nothing to open." }); return true; }
 
-    // Hustota převodu placeholder → cílová URL uvnitř dávky
-    const stepMs   = Math.max(200, Number(msg.stepMs || 1500));
+    loadBurstConfig().then((cfg) => {
+      const stepMs            = Math.max(200, Number(msg.stepMs            ?? cfg.stepMs));
+      const BATCH_SIZE        = Math.max(1,  Math.min(50, Number(msg.batchSize        ?? cfg.size)));
+      const BATCH_INTERVAL_MS = Math.max(500,         Number(msg.batchIntervalMs ?? cfg.intervalMs));
 
-    // Dávky: kolik a jak často (omezení na max 50 karet v dávce a min 0.5s mezi dávkami)
-    const BATCH_SIZE        = Math.max(1, Math.min(50, Number(msg.batchSize || 10)));
-    const BATCH_INTERVAL_MS = Math.max(500, Number(msg.batchIntervalMs || 30000));
+      const queue = urls.slice(0, hardCap);
+      const total = queue.length;
 
-    const queue = urls.slice(0, hardCap);
-    const total = queue.length;
+      const pendingSet = sessions.get(openerId) || new Set();
+      sessions.set(openerId, pendingSet);
 
-    const pendingSet = sessions.get(openerId) || new Set();
-    sessions.set(openerId, pendingSet);
+      progressMap.set(openerId, { total, created: 0, opened: 0 });
+      try { chrome.tabs.sendMessage(openerId, { type: "burstProgress", total, created: 0, opened: 0 }); } catch {}
 
-    let createdTotal = 0;
-    let timer = null;
+      let timer = null;
 
-    const openOneBatch = () => {
-      if (!queue.length) {
-        if (timer) { clearInterval(timer); timer = null; }
-        return;
-      }
+      const openOneBatch = () => {
+        if (!queue.length) {
+          if (timer) { clearInterval(timer); timer = null; }
+          runState.delete(openerId);
+          return;
+        }
 
-      let inBatch = 0;
-      while (inBatch < BATCH_SIZE && queue.length) {
-        const targetUrl = queue.shift();
-        const ordinal   = ++createdTotal;
+        let inBatch = 0;
+        while (inBatch < BATCH_SIZE && queue.length) {
+          const targetUrl = queue.shift();
 
-        const ph = new URL(PLACEHOLDER_URL);
-        ph.searchParams.set("u", targetUrl);
-        ph.searchParams.set("i", String(ordinal));
-        ph.searchParams.set("n", String(total));
+          const st = progressMap.get(openerId) || { total, created: 0, opened: 0 };
+          const ordinal = (st.created || 0) + 1;
 
-        // uvnitř dávky rozprostřít alarmy po stepMs
-        const perDelay = stepMs * (inBatch + 1);
-        ph.searchParams.set("d", String(perDelay));
+          const ph = new URL(PLACEHOLDER_URL);
+          ph.searchParams.set("u", String(targetUrl));
+          ph.searchParams.set("i", String(ordinal));
+          ph.searchParams.set("n", String(total));
 
-        chrome.tabs.create(
-          { url: ph.href, active: false, openerTabId: openerId || undefined, windowId: winId },
-          async (tab) => {
-            const err = chrome.runtime.lastError;
-            if (err || !tab?.id) return;
+          const perDelay = stepMs * (inBatch + 1);
+          ph.searchParams.set("d", String(perDelay));
 
-            try { await chrome.tabs.update(tab.id, { autoDiscardable: true }); } catch {}
-            const alarmName = `burst:${tab.id}`;
-            chrome.alarms.create(alarmName, { when: Date.now() + perDelay });
+          chrome.tabs.create(
+            { url: ph.href, active: false, openerTabId: openerId || undefined, windowId: winId },
+            async (tab) => {
+              const err = chrome.runtime.lastError;
+              if (err || !tab?.id) return;
 
-            try { await addMapping(tab.id, targetUrl, alarmName, openerId || undefined); } catch {}
-            pendingSet.add(tab.id);
+              try { await chrome.tabs.update(tab.id, { autoDiscardable: true }); } catch {}
+              const alarmName = `burst:${tab.id}`;
+              chrome.alarms.create(alarmName, { when: Date.now() + perDelay });
 
-            // placeholdery do zavřené skupiny
-            if (winId != null) {
-              try { await groupTabAsPlaceholder(tab.id, winId); } catch {}
+              try { await addMapping(tab.id, targetUrl, alarmName, openerId || undefined); } catch {}
+              pendingSet.add(tab.id);
+
+              if (winId != null) {
+                try { await groupTabToMainEnd(tab.id, winId); } catch {}
+              }
+
+              const now = progressMap.get(openerId) || { total, created: 0, opened: 0 };
+              now.created = Math.min(now.total, (now.created || 0) + 1);
+              progressMap.set(openerId, now);
+              try { await chrome.tabs.sendMessage(openerId, { type: "burstProgress", total: now.total, created: now.created, opened: now.opened || 0 }); } catch {}
             }
-          }
-        );
+          );
 
         inBatch++;
-      }
+        }
 
-      if (!queue.length && timer) {
-        clearInterval(timer);
-        timer = null;
-      }
-    };
+        runState.set(openerId, { timer, queueLeft: queue.length });
 
-    // spustit první dávku hned a další po intervalu
-    openOneBatch();
-    timer = setInterval(openOneBatch, BATCH_INTERVAL_MS);
+        if (!queue.length && timer) {
+          clearInterval(timer);
+          runState.delete(openerId);
+          timer = null;
+        }
+      };
 
-    sendResponse({
-      ok: true,
-      enqueued: total,
-      batchSize: BATCH_SIZE,
-      batchIntervalMs: BATCH_INTERVAL_MS,
-      stepMs
-    });
+      openOneBatch();
+      timer = setInterval(openOneBatch, BATCH_INTERVAL_MS);
+      runState.set(openerId, { timer, queueLeft: queue.length });
+
+      sendResponse({
+        ok: true,
+        enqueued: total,
+        batchSize: BATCH_SIZE,
+        batchIntervalMs: BATCH_INTERVAL_MS,
+        stepMs
+      });
+    }).catch(err => sendResponse({ ok: false, error: String(err) }));
     return true;
   }
-  //#endregion
+
+  // STOP aktuálního běhu pro daný opener (tab, ze kterého se spouštělo)
+  if (msg.type === "burstStop") {
+    const openerId = sender?.tab?.id || null;
+    if (!openerId) { sendResponse({ ok:false, error:"no opener" }); return true; }
+    stopBurstFor(openerId).then(()=> sendResponse({ ok:true }))
+                          .catch(err => sendResponse({ ok:false, error:String(err) }));
+    return true;
+  }
 
   if (msg.type === "setSortOrder") {
     const v = (msg.dir === "desc") ? "desc" : "asc";
@@ -758,8 +969,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 //#endregion
 
-//#region Klávesové příkazy (pro Edge/Chrome zkratky)
-// ============= klávesové příkazy (nastav v edge://extensions/shortcuts) =============
+//#region Klávesové příkazy
 chrome.commands?.onCommand.addListener(async (command) => {
   if (command === "toggle-sort") {
     const next = (sortDirCache === "asc") ? "desc" : "asc";
@@ -767,7 +977,6 @@ chrome.commands?.onCommand.addListener(async (command) => {
     await resortAllWindows();
   }
   if (command === "toggle-locale") {
-    // cyklus: auto -> cs -> en -> auto ...
     const next = localeCache === "auto" ? "cs" : (localeCache === "cs" ? "en" : "auto");
     await setLocale(next);
     await resortAllWindows();
