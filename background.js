@@ -651,9 +651,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // Hustota převodu placeholder → cílová URL uvnitř dávky
     const stepMs   = Math.max(200, Number(msg.stepMs || 1500));
 
-    // Dávky: kolik a jak často
+    // Dávky: kolik a jak často (omezení na max 50 karet v dávce a min 0.5s mezi dávkami)
     const BATCH_SIZE        = Math.max(1, Math.min(50, Number(msg.batchSize || 10)));
-    const BATCH_INTERVAL_MS = Math.max(500, Number(msg.batchIntervalMs || 10000));
+    const BATCH_INTERVAL_MS = Math.max(500, Number(msg.batchIntervalMs || 30000));
 
     const queue = urls.slice(0, hardCap);
     const total = queue.length;

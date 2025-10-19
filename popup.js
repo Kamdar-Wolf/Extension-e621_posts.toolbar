@@ -1,58 +1,79 @@
-(async function(){
-  const [curTab] = await chrome.tabs.query({ active:true, currentWindow:true });
-  const url = curTab?.url || '';
-  const isHttp = /^https?:\/\//i.test(url);
-  const origin = isHttp ? (new URL(url)).origin : '';
+(async function () {
+  const el = (id)=>document.getElementById(id);
+  const $total=el('total'), $opened=el('opened'), $converted=el('converted'), $inflight=el('inflight'), $bar=el('bar'), $status=el('status');
 
-  const curOriginEl = document.getElementById('curOrigin');
-  const statusEl    = document.getElementById('status');
-  const toggleBtn   = document.getElementById('toggle');
-  const injectBtn   = document.getElementById('inject');
-  const msgEl       = document.getElementById('msg');
-
-  curOriginEl.textContent = isHttp ? origin : '(unsupported page)';
-
-  const say = (txt, ok) => {
-    msgEl.textContent = txt || '';
-    msgEl.className = 'note ' + (ok===true ? 'ok' : ok===false ? 'err' : '');
-  };
-
-  if (!isHttp) {
-    statusEl.textContent = 'N/A';
-    toggleBtn.disabled = true;
-    injectBtn.disabled = true;
-    say('Works only on http/https pages.', false);
-    return;
+  // === zdroj URL: příklad – vezmeme je z active tab přes content skript (= musíš mít svůj content, co je vrátí)
+  async function collectUrlsFromActiveTab() {
+    const [tab] = await chrome.tabs.query({active:true,currentWindow:true});
+    if (!tab?.id) return [];
+    // očekává se, že content skript na zprávu 'collectUrls' vrátí {urls:[...]}
+    try {
+      const resp = await chrome.tabs.sendMessage(tab.id, { type: "collectUrls" });
+      return Array.isArray(resp?.urls) ? resp.urls : [];
+    } catch {
+      // fallback: nic nenašlo
+      return [];
+    }
   }
 
-  const { autoSites } = await chrome.storage.local.get('autoSites');
-  let enabled = Array.isArray(autoSites) && autoSites.includes(origin);
-  const updateUI = () => {
-    statusEl.textContent = enabled ? 'ENABLED' : 'DISABLED';
-    toggleBtn.textContent = enabled ? 'Disable' : 'Enable';
-    toggleBtn.className = enabled ? 'destructive' : '';
-  };
-  updateUI();
+  function updateBar(total, converted){
+    const pct = (!total || total<=0) ? 0 : Math.min(100, Math.round((converted/total)*100));
+    $bar.style.width = pct + '%';
+  }
 
-  injectBtn.addEventListener('click', async () => {
-    say('');
-    const res = await chrome.runtime.sendMessage({ type:'INJECT_NOW', tabId: curTab.id })
-      .catch(e => ({ ok:false, error:String(e)}));
-    say(res?.ok ? 'Injected.' : ('Failed: ' + (res?.error||'unknown')), !!res?.ok);
+  // progress z backgroundu
+  chrome.runtime.onMessage.addListener((msg, sender) => {
+    if (msg?.type === 'burstProgress') {
+      $total.textContent = String(msg.total ?? 0);
+      $opened.textContent = String(msg.opened ?? 0);
+      $converted.textContent = String(msg.converted ?? 0);
+      $inflight.textContent = String(msg.inFlight ?? 0);
+      updateBar(msg.total, msg.converted);
+      $status.textContent = `Běží… dávka=${el('batchSize').value}, interval=${el('batchInterval').value}ms, krok=${el('stepMs').value}ms`;
+    }
+    if (msg?.type === 'burstDone') {
+      $status.textContent = 'Hotovo.';
+    }
   });
 
-  toggleBtn.addEventListener('click', async () => {
-    say('');
-    if (!enabled) {
-      const res = await chrome.runtime.sendMessage({ type:'ENABLE_AUTO_FOR_ORIGIN', origin })
-        .catch(e => ({ ok:false, error:String(e) }));
-      if (res?.ok) { enabled = true; updateUI(); say('Auto enabled for this site.', true); }
-      else say('Permission/enable failed: ' + (res?.error || 'unknown'), false);
-    } else {
-      const res = await chrome.runtime.sendMessage({ type:'DISABLE_AUTO_FOR_ORIGIN', origin })
-        .catch(e => ({ ok:false, error:String(e) }));
-      if (res?.ok) { enabled = false; updateUI(); say('Auto disabled for this site.', true); }
-      else say('Disable failed: ' + (res?.error || 'unknown'), false);
+  el('start').addEventListener('click', async () => {
+    $status.textContent = 'Připravuji…';
+    let urls = await collectUrlsFromActiveTab();
+
+    // Máš-li v UI vlastní sběr URL (např. z rozhraní stránky), klidně tenhle sběr přepiš.
+    if (!urls || urls.length===0) {
+      $status.textContent = 'Nenašel jsem žádné URL.';
+      return;
     }
+
+    const batchSize = Number(el('batchSize').value || 5);
+    const batchIntervalMs = Number(el('batchInterval').value || 3000);
+    const stepMs = Number(el('stepMs').value || 1500);
+
+    // reset lokálního zobrazení
+    $total.textContent = String(urls.length);
+    $opened.textContent = '0';
+    $converted.textContent = '0';
+    $inflight.textContent = '0';
+    updateBar(urls.length, 0);
+
+    chrome.runtime.sendMessage({
+      type: 'burstOpen',
+      urls,
+      batchSize,
+      batchIntervalMs,
+      stepMs
+    }, (resp) => {
+      if (!resp?.ok) {
+        $status.textContent = 'Chyba: ' + (resp?.error || 'neznámá');
+        return;
+      }
+      $status.textContent = `Běží… (${resp.enqueued} URL)`;
+    });
+  });
+
+  el('stop').addEventListener('click', () => {
+    // jednoduché "stop" = nic dalšího neodesílat; pokročilé stop by vyžadovalo držet id alarmů a rušit
+    $status.textContent = 'Zastaveno (nové dávky se neodešlou).';
   });
 })();

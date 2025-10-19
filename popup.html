@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="cs">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Otevřít (hromadně)</title>
+  <style>
+    body{font:13px/1.4 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Ubuntu,Helvetica,Arial,sans-serif;color:#e6e6e6;background:#1e1e1e;margin:12px;min-width:280px}
+    h1{font-size:14px;margin:0 0 8px}
+    label{display:block;margin:8px 0 4px;color:#bbb}
+    input[type=number]{width:100%;padding:6px 8px;border-radius:6px;border:1px solid #444;background:#2a2a2a;color:#eee;box-sizing:border-box}
+    button{padding:8px 10px;border:0;border-radius:8px;cursor:pointer}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+    .ok{background:#1e7e34}.warn{background:#b02a37}
+    .bar{height:8px;background:#333;border-radius:6px;margin:8px 0;overflow:hidden}
+    .bar>i{display:block;height:100%;width:0;background:#3fb950}
+    .muted{color:#aaa}
+    .stats{display:flex;justify-content:space-between;font-variant-numeric:tabular-nums}
+  </style>
+</head>
+<body>
+  <h1>Hromadné otevření</h1>
+
+  <label>Počet v dávce</label>
+  <input id="batchSize" type="number" min="1" max="50" value="5">
+
+  <div class="row">
+    <div>
+      <label>Interval mezi dávkami (ms)</label>
+      <input id="batchInterval" type="number" min="500" step="100" value="3000">
+    </div>
+    <div>
+      <label>Prodleva v dávce (ms)</label>
+      <input id="stepMs" type="number" min="200" step="100" value="1500">
+    </div>
+  </div>
+
+  <div class="bar"><i id="bar"></i></div>
+  <div class="stats">
+    <span class="muted">Celkem: <b id="total">0</b></span>
+    <span>Otevřeno: <b id="opened">0</b></span>
+    <span>Převedeno: <b id="converted">0</b></span>
+    <span class="muted">Letí: <b id="inflight">0</b></span>
+  </div>
+
+  <div style="margin-top:10px;display:flex;gap:8px">
+    <button id="start" class="ok">Start</button>
+    <button id="stop" class="warn">Stop</button>
+  </div>
+
+  <p id="status" class="muted" style="margin-top:8px">Připraveno.</p>
+
+  <script src="popup.js"></script>
+</body>
+</html>
