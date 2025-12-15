@@ -36,8 +36,8 @@
     const ATTR_FILE_URL = 'data-file-url';
     const hasGrid = !!document.querySelector(SELECTOR_CARD);
 
-    const DEFAULT_LIMIT = 250;
-    const HARD_CAP = 250;
+    const DEFAULT_LIMIT = 2000;
+    const HARD_CAP = 2000;
 
     const UI_BORDER = '#ffee95';
     const UI_WIDTH  = '215px';
@@ -738,29 +738,65 @@ if (!window.__kd_sfwHotkeyBound) {
           return; // konec – žádná sekvenční smyčka
         }
 
-        // ---- původní sekvenční start (OPEN/DOWNLOAD)
+        // ---- OPEN: sekvenční otevírání jede přes background (chrome.alarms), aby to
+        // na pozadí nespadlo na ~30s throttling. Content script jen zobrazuje progres.
+        if (viewMode === 'open') {
+          urls = found; idx = 0; running = true; paused = false;
+          el.toggle.textContent = TXT[lang].pause;
+          el.note.textContent = TXT[lang].running;
+          updateBar();
+          publishLocalStatus(TXT[lang].running);
+
+          chrome.runtime.sendMessage({ type: 'seqOpenStart', urls: found, delayMs }, (res) => {
+            const e = chrome.runtime.lastError;
+            if (e || !res?.ok) {
+              stopRun('paused');
+              el.stats.textContent = 'Chyba: ' + (e?.message || res?.error || 'seq start failed');
+              publishLocalStatus('error');
+              return;
+            }
+            // čekáme na seqProgress zprávy z backgroundu
+          });
+          return;
+        }
+
+        // ---- DOWNLOAD: zůstává lokálně (FS API běží v contentu)
         urls = found; idx = 0; running = true; paused = false;
         el.toggle.textContent=TXT[lang].pause; el.note.textContent=TXT[lang].running;
         updateBar(); publishLocalStatus(TXT[lang].running);
-        timer = setTimeout(viewMode==='open' ? tickOpen : tickDownload, delayMs);
+        timer = setTimeout(tickDownload, delayMs);
         return;
       }
 
       // toggle pauzy
       if (!paused){
         paused = true; el.toggle.textContent=TXT[lang].resume; el.note.textContent=TXT[lang].paused;
-        clearTimeout(timer); timer=null; if (activeAbort) { try { activeAbort.abort(); } catch {} activeAbort=null; }
+        if (viewMode === 'open') {
+          chrome.runtime.sendMessage({ type: 'seqOpenPause' }, () => {});
+        } else {
+          clearTimeout(timer); timer=null; if (activeAbort) { try { activeAbort.abort(); } catch {} activeAbort=null; }
+        }
         updateBar(); publishLocalStatus(TXT[lang].paused);
       } else {
         paused = false; el.toggle.textContent=TXT[lang].pause; el.note.textContent=TXT[lang].running;
         updateBar(); publishLocalStatus(TXT[lang].running);
-        timer = setTimeout(viewMode==='open' ? tickOpen : tickDownload, delayMs);
+        if (viewMode === 'open') {
+          chrome.runtime.sendMessage({ type: 'seqOpenResume' }, () => {});
+        } else {
+          timer = setTimeout(tickDownload, delayMs);
+        }
       }
     }
 
     function swallow(e){ e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); }
     el.toggle.addEventListener('click', e=>{ swallow(e); startOrPause(); }, true);
-    el.stop.addEventListener('click',   e=>{ swallow(e); urls=[]; idx=0; stopRun('paused'); }, true);
+    el.stop.addEventListener('click',   e=>{
+      swallow(e);
+      if (viewMode === 'open') {
+        chrome.runtime.sendMessage({ type: 'seqOpenStop' }, () => {});
+      }
+      urls=[]; idx=0; stopRun('paused');
+    }, true);
 
     // ---------- VÝBĚR SLOŽKY ----------
     async function pickDirectoryHandle(){
@@ -811,6 +847,48 @@ if (!window.__kd_sfwHotkeyBound) {
     el.sfw.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); setSfw(!sfwEnabled()); paintSfwBtn(); }, true);
     addEventListener('keydown', (e) => { if (e.key === '\\') { e.preventDefault(); setSfw(!sfwEnabled()); paintSfwBtn(); } });
     paintSfwBtn();
+
+    // --- PROGRES Z BACKGROUNDu (SEQ OPEN) ---
+    try {
+      chrome.runtime.onMessage.addListener((msg) => {
+        if (!msg || !msg.type) return;
+
+        if (msg.type === 'seqProgress') {
+          // background otevírá URL, content jen zobrazuje progres
+          const total = Number(msg.total || (urls ? urls.length : 0)) || 0;
+          const opened = Number(msg.opened || 0) || 0;
+          const pausedNow = !!msg.paused;
+          const d = Number(msg.delayMs || delayMs) || delayMs;
+
+          if (!urls || !urls.length) {
+            // fallback: kdyby se něco pokazilo, ať UI aspoň sedí
+            urls = new Array(total).fill('');
+          }
+          delayMs = d;
+          running = true;
+          paused = pausedNow;
+          idx = Math.min(opened, urls.length);
+
+          el.toggle.textContent = paused ? TXT[lang].resume : TXT[lang].pause;
+          el.note.textContent = paused ? TXT[lang].paused : TXT[lang].running;
+          updateBar();
+          publishLocalStatus(paused ? TXT[lang].paused : TXT[lang].running);
+        }
+
+        if (msg.type === 'seqDone') {
+          idx = urls.length;
+          stopRun('done');
+        }
+
+        if (msg.type === 'seqStopped') {
+          stopRun('paused');
+        }
+
+        if (msg.type === 'seqError') {
+          el.stats.textContent = 'Chyba: ' + (msg.error || 'unknown');
+        }
+      });
+    } catch {}
 
     updateBar();
     applyLangTexts();
