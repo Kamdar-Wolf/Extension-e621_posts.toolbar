@@ -1,8 +1,0 @@
-[
-  { "key": "alt+0",        "command": "editor.foldAll" },
-  { "key": "alt+shift+0",  "command": "editor.unfoldAll" },
-  { "key": "alt+9",        "command": "editor.foldAllMarkerRegions" },   // //#region
-  { "key": "alt+shift+9",  "command": "editor.unfoldAllMarkerRegions" },
-  { "key": "ctrl+alt+[",   "command": "editor.fold" },
-  { "key": "ctrl+alt+]",   "command": "editor.unfold" }
-]
