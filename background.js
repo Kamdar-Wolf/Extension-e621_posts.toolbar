@@ -678,6 +678,66 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     return;
   }
 
+  // --- SEQ (stabilní sekvenční otevírání přes alarmy; bez throttlingu background tabu) ---
+  const s = /^seq:(\d+)$/.exec(alarm.name);
+  if (s) {
+    const openerId = parseInt(s[1], 10);
+    const st = runState.get(openerId);
+    if (!st) return;
+    if (st.paused) return;
+
+    const nextUrl = st.queue.shift();
+    if (!nextUrl) {
+      runState.delete(openerId);
+      try { await chrome.tabs.sendMessage(openerId, { type: "seqDone", total: st.total, opened: st.opened }); } catch {}
+      return;
+    }
+
+    try {
+      const created = await chrome.tabs.create({ url: nextUrl, active: false, openerTabId: openerId });
+      st.opened = Math.min(st.total, (st.opened || 0) + 1);
+
+      // seskupování + SFW injekce (reuse existující logiky)
+      try {
+        if (created?.id != null && st.windowId != null) {
+          if (isPostDetail(nextUrl)) {
+            const gid = await groupTabIfPosts(created.id, st.windowId, nextUrl);
+            scheduleGroupSort(gid ?? (created.groupId ?? -1), st.windowId);
+          } else if (isPostsListing(nextUrl)) {
+            await ensureUngrouped(created.id);
+          } else {
+            await groupTabToMainEnd(created.id, st.windowId);
+          }
+          try { const u = new URL(nextUrl); if (isE6Host(u.hostname)) await injectSfwLinkRewriter(created.id); } catch {}
+        }
+      } catch {}
+
+      runState.set(openerId, st);
+      try {
+        await chrome.tabs.sendMessage(openerId, {
+          type: "seqProgress",
+          total: st.total,
+          opened: st.opened,
+          left: st.queue.length,
+          delayMs: st.delayMs,
+          running: true,
+          paused: false
+        });
+      } catch {}
+    } catch (e) {
+      try { await chrome.tabs.sendMessage(openerId, { type: "seqError", error: String(e && e.message ? e.message : e) }); } catch {}
+    }
+
+    // naplánuj další tick (one-shot alarm)
+    if (st.queue.length) {
+      try { chrome.alarms.create(`seq:${openerId}`, { when: Date.now() + st.delayMs }); } catch {}
+    } else {
+      runState.delete(openerId);
+      try { await chrome.tabs.sendMessage(openerId, { type: "seqDone", total: st.total, opened: st.opened }); } catch {}
+    }
+    return;
+  }
+
   const m = /^burst:(\d+)$/.exec(alarm.name);
   if (!m) return;
   const phId = parseInt(m[1], 10);
@@ -831,6 +891,76 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  // --- SEQ OPEN (stabilní sekvenční otevírání přes chrome.alarms) ---
+  if (msg.type === "seqOpenStart") {
+    const openerId = sender?.tab?.id;
+    const winId    = sender?.tab?.windowId;
+
+    const urlsRaw = Array.isArray(msg.urls) ? msg.urls : [];
+    const urls = [...new Set(urlsRaw)].filter(Boolean);
+    const delayMs = Math.max(200, Number(msg.delayMs || 1000));
+    const hardCap = Math.min(5000, urls.length);
+
+    if (!openerId || hardCap === 0) {
+      sendResponse({ ok: false, error: "Nothing to open / missing opener tab." });
+      return true;
+    }
+
+    // pokud už něco běží, tak to nejdřív zastav
+    try { chrome.alarms.clear(`seq:${openerId}`); } catch {}
+    runState.set(openerId, {
+      kind: "seq",
+      queue: urls.slice(0, hardCap),
+      total: hardCap,
+      opened: 0,
+      delayMs,
+      paused: false,
+      windowId: winId
+    });
+
+    try { chrome.alarms.create(`seq:${openerId}`, { when: Date.now() + delayMs }); } catch {}
+    try {
+      chrome.tabs.sendMessage(openerId, { type: "seqProgress", total: hardCap, opened: 0, left: hardCap, delayMs, running: true, paused: false });
+    } catch {}
+    sendResponse({ ok: true, total: hardCap, delayMs });
+    return true;
+  }
+
+  if (msg.type === "seqOpenPause") {
+    const openerId = sender?.tab?.id;
+    const st = openerId != null ? runState.get(openerId) : null;
+    if (!openerId || !st || st.kind !== "seq") { sendResponse({ ok: false, error: "No seq run." }); return true; }
+    st.paused = true;
+    runState.set(openerId, st);
+    try { chrome.alarms.clear(`seq:${openerId}`); } catch {}
+    try { chrome.tabs.sendMessage(openerId, { type: "seqProgress", total: st.total, opened: st.opened, left: st.queue.length, delayMs: st.delayMs, running: true, paused: true }); } catch {}
+    sendResponse({ ok: true });
+    return true;
+  }
+
+  if (msg.type === "seqOpenResume") {
+    const openerId = sender?.tab?.id;
+    const st = openerId != null ? runState.get(openerId) : null;
+    if (!openerId || !st || st.kind !== "seq") { sendResponse({ ok: false, error: "No seq run." }); return true; }
+    st.paused = false;
+    runState.set(openerId, st);
+    try { chrome.alarms.create(`seq:${openerId}`, { when: Date.now() + st.delayMs }); } catch {}
+    try { chrome.tabs.sendMessage(openerId, { type: "seqProgress", total: st.total, opened: st.opened, left: st.queue.length, delayMs: st.delayMs, running: true, paused: false }); } catch {}
+    sendResponse({ ok: true });
+    return true;
+  }
+
+  if (msg.type === "seqOpenStop") {
+    const openerId = sender?.tab?.id;
+    const st = openerId != null ? runState.get(openerId) : null;
+    if (!openerId || !st || st.kind !== "seq") { sendResponse({ ok: false, error: "No seq run." }); return true; }
+    try { chrome.alarms.clear(`seq:${openerId}`); } catch {}
+    runState.delete(openerId);
+    try { chrome.tabs.sendMessage(openerId, { type: "seqStopped" }); } catch {}
+    sendResponse({ ok: true });
+    return true;
+  }
+
   // --- HROMADNÉ OTEVÍRÁNÍ (sekvenční režim odstraněn) ---
   if (msg.type === "burstOpen") {
     const openerId = sender?.tab?.id || null;
@@ -838,7 +968,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
     const urlsRaw  = Array.isArray(msg.urls) ? msg.urls : [];
     const urls     = [...new Set(urlsRaw)];
-    const hardCap  = Math.min(250, urls.length);
+    const hardCap  = Math.min(2000, urls.length);
     if (hardCap === 0) { sendResponse({ ok: false, error: "Nothing to open." }); return true; }
 
     loadBurstConfig().then((cfg) => {
@@ -983,3 +1113,85 @@ chrome.commands?.onCommand.addListener(async (command) => {
   }
 });
 //#endregion
+
+// --- Pomocné: aktivní karta v aktuálním okně
+async function getActiveTab() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  return tab || null;
+}
+
+// --- Toggle pro skupinu aktivní karty
+async function toggleActiveGroup() {
+  const tab = await getActiveTab();
+  if (!tab || tab.groupId === chrome.tabGroups.TAB_GROUP_ID_NONE) return;
+  const grp = await chrome.tabGroups.get(tab.groupId);
+  await chrome.tabGroups.update(tab.groupId, { collapsed: !grp.collapsed });
+}
+
+// --- Reakce na systémovou zkratku (Ctrl+Shift+Y)
+chrome.commands.onCommand.addListener(async (cmd) => {
+  if (cmd === "toggle-active-group") {
+    try { await toggleActiveGroup(); } catch (e) { console.warn("toggle-active-group:", e); }
+  }
+});
+
+// --- Reakce na zprávu z content-scriptu (Shift+Y)
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg && msg.type === "toggle-group-from-page") {
+    toggleActiveGroup().then(() => sendResponse({ ok: true })).catch(err => sendResponse({ ok:false, err: String(err) }));
+    return true; // async sendResponse
+  }
+});
+//#endregion
+
+// ====== Tab Group Toggle by Name ======
+const TARGET_GROUP_TITLE = "e6"; // název skupiny, kterou chceme ovládat (case-insensitive)
+
+/** Aktivní okno (id) */
+async function getCurrentWindowId() {
+  const win = await chrome.windows.getCurrent();
+  return win.id;
+}
+
+/** Najdi skupinu podle názvu v daném okně (přesné porovnání bez diakritiky, case-insensitive) */
+async function getGroupByTitleInWindow(windowId, title) {
+  const wanted = (title || "").trim().toLowerCase();
+  const groups = await chrome.tabGroups.query({ windowId });
+
+  for (const g of groups) {
+    // některé buildy vrací title už tady, jindy jen v get()
+    const det = await chrome.tabGroups.get(g.id);
+    const t = (det.title || "").trim().toLowerCase();
+    if (t === wanted) return det; // vrací detail se stavem collapsed
+  }
+  return null;
+}
+
+/** Přepni collapsed pro skupinu s názvem TARGET_GROUP_TITLE v aktuálním okně */
+async function toggleNamedGroup() {
+  const winId = await getCurrentWindowId();
+  const grp = await getGroupByTitleInWindow(winId, TARGET_GROUP_TITLE);
+  if (!grp) {
+    console.warn(`[tab-group] Skupina '${TARGET_GROUP_TITLE}' v tomto okně nenalezena.`);
+    return false;
+  }
+  await chrome.tabGroups.update(grp.id, { collapsed: !grp.collapsed });
+  return true;
+}
+
+// --- 1) Reakce na systémovou zkratku z "commands" (Ctrl+Shift+Y) ---
+chrome.commands.onCommand.addListener(async (cmd) => {
+  if (cmd === "toggle-active-group") {
+    try { await toggleNamedGroup(); } catch (e) { console.warn("toggleNamedGroup:", e); }
+  }
+});
+
+// --- 2) Reakce na zprávu z content-scriptu (čisté Shift+Y) ---
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg && msg.type === "toggle-group-from-page") {
+    toggleNamedGroup()
+      .then(ok => sendResponse({ ok }))
+      .catch(err => sendResponse({ ok:false, err: String(err) }));
+    return true; // async response
+  }
+});
