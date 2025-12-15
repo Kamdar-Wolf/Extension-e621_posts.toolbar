@@ -1,9 +1,8 @@
 {
   "manifest_version": 3,
   "name": "e621/e6AI Posts Opener + Toolbar",
-  "version": "6.2.5",
+  "version": "6.2.7",
   "description": "Otevírání/stahování ze stránek s cestou /posts*. CZ/EN UI, delay/limit, volba složky (FS API) + fallback do Stažené, spodní fixní lišta. Burst/placeholder režim.",
-
   "permissions": [
     "contextMenus",
     "downloads",
@@ -21,24 +20,32 @@
     "https://e621.net/*",
     "https://*.e621.net/*"
   ],
-
-  "background": { "service_worker": "background.js" },
-
+  "background": {
+    "service_worker": "background.js"
+  },
   "action": {
     "default_title": "e6 – přepnout řazení skupiny"
   },
-
   "commands": {
     "toggle-sort": {
-      "suggested_key": { "default": "Ctrl+Shift+X" },
+      "suggested_key": {
+        "default": "Ctrl+Shift+X"
+      },
       "description": "Přepnout řazení skupiny e6 (A↔Z, 1↔9)"
     },
     "toggle-locale": {
-      "suggested_key": { "default": "Ctrl+Shift+L" },
+      "suggested_key": {
+        "default": "Ctrl+Shift+L"
+      },
       "description": "Přepnout jazyk řazení (Auto → CZ → EN)"
+    },
+    "toggle-active-group": {
+      "description": "Sbalit/Rozbalit skupinu aktivní karty",
+      "suggested_key": {
+        "default": "Ctrl+Shift+Y"
+      }
     }
   },
-
   "content_scripts": [
     {
       "matches": [
@@ -47,7 +54,9 @@
         "https://e621.net/*",
         "https://*.e621.net/*"
       ],
-      "js": ["content/sfw-link-rewriter.js"],
+      "js": [
+        "content/sfw-link-rewriter.js"
+      ],
       "run_at": "document_start",
       "all_frames": true,
       "match_about_blank": true
@@ -64,19 +73,33 @@
         "content/e6-post-toolbar.js",
         "content/i18n-runtime.js"
       ],
-      "run_at": "document_idle",
+      "run_at": "document_end",
       "all_frames": true,
       "match_about_blank": true
+    },
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "content/shortcut-shifty.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true
     }
   ],
-
   "web_accessible_resources": [
     {
-      "resources": ["placeholder.html", "icons/*"],
-      "matches": ["*://*/*"]
+      "resources": [
+        "placeholder.html",
+        "icons/*"
+      ],
+      "matches": [
+        "*://*/*"
+      ]
     }
   ],
-
   "icons": {
     "16": "icons/16.png",
     "48": "icons/48.png",
