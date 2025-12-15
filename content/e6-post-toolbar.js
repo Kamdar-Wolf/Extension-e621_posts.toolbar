@@ -32,7 +32,7 @@
   Object.assign(toolbar.style, {position:'static', background:'transparent', padding:'0', margin:'0', boxShadow:'none'});
   Object.assign(inner.style, {
     display:'inline-flex', alignItems:'center', gap:'8px',
-    padding:'8px 10px', borderRadius:'10px',
+    padding:'10px 10px', borderRadius:'10px',
     maxWidth:'min(1100px, 96vw)', pointerEvents:'auto'
   });
 
@@ -54,7 +54,7 @@
     #image-container { display:flex; justify-content:center; align-items:flex-start; margin:0 auto; max-width:100vw; }
     #image, #image-container img, #image-container video, #image-container canvas {
       height:auto !important; width:auto; max-width:min(100%, calc(100vw - 16px));
-      max-height: calc(95vh - var(--kd-ptbr-h) - 35px) !important; object-fit: contain; display:block;
+      max-height: calc(100vh - 40px - var(--kd-ptbr-h) - 40px) !important; object-fit: contain; display:block;
     }
     body { padding-bottom: calc(var(--kd-ptbr-h) + 12px); }
   `;
