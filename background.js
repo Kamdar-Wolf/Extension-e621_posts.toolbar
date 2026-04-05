@@ -45,13 +45,13 @@ let localeCache = LOCALE_DEFAULT;
 let acceptLangs = [];
 
 // --- Burst konfigurace (nastavitelná z UI) ---
-const BURST_SIZE_KEY     = "kd_burst_size";
+const BURST_SIZE_KEY = "kd_burst_size";
 const BURST_INTERVAL_KEY = "kd_burst_interval_ms";
-const BURST_STEP_KEY     = "kd_burst_step_ms";
+const BURST_STEP_KEY = "kd_burst_step_ms";
 
-const BURST_SIZE_DEFAULT     = 1;     // počet placeholderů v dávce
+const BURST_SIZE_DEFAULT = 1;     // počet placeholderů v dávce
 const BURST_INTERVAL_DEFAULT = 2000;  // ms mezi dávkami (>=500)
-const BURST_STEP_DEFAULT     = 1500;  // ms rozprostření uvnitř dávky (>=200)
+const BURST_STEP_DEFAULT = 1500;  // ms rozprostření uvnitř dávky (>=200)
 
 // Průběh pro každý openerId: { total, created, opened }
 const progressMap = new Map();
@@ -81,7 +81,7 @@ async function removeMapping(tabId) {
   const map = await getMap();
   const entry = map[tabId];
   if (entry?.alarmName) {
-    try { await chrome.alarms.clear(entry.alarmName); } catch {}
+    try { await chrome.alarms.clear(entry.alarmName); } catch { }
   }
   delete map[tabId];
   await setMap(map);
@@ -110,7 +110,7 @@ async function setLocale(v) {
   const val = (v === "cs" || v === "en") ? v : "auto";
   localeCache = val;
   await chrome.storage.local.set({ [LOCALE_KEY]: val });
-  try { await broadcastUiLocale(); } catch {}
+  try { await broadcastUiLocale(); } catch { }
   return val;
 }
 
@@ -118,16 +118,16 @@ async function setLocale(v) {
 async function loadBurstConfig() {
   const o = await chrome.storage.local.get([BURST_SIZE_KEY, BURST_INTERVAL_KEY, BURST_STEP_KEY]);
   return {
-    size:       Number.isFinite(o[BURST_SIZE_KEY])     ? Math.max(1, Math.min(50, Number(o[BURST_SIZE_KEY]))) : BURST_SIZE_DEFAULT,
-    intervalMs: Number.isFinite(o[BURST_INTERVAL_KEY]) ? Math.max(500, Number(o[BURST_INTERVAL_KEY]))         : BURST_INTERVAL_DEFAULT,
-    stepMs:     Number.isFinite(o[BURST_STEP_KEY])     ? Math.max(200, Number(o[BURST_STEP_KEY]))             : BURST_STEP_DEFAULT,
+    size: Number.isFinite(o[BURST_SIZE_KEY]) ? Math.max(1, Math.min(50, Number(o[BURST_SIZE_KEY]))) : BURST_SIZE_DEFAULT,
+    intervalMs: Number.isFinite(o[BURST_INTERVAL_KEY]) ? Math.max(500, Number(o[BURST_INTERVAL_KEY])) : BURST_INTERVAL_DEFAULT,
+    stepMs: Number.isFinite(o[BURST_STEP_KEY]) ? Math.max(200, Number(o[BURST_STEP_KEY])) : BURST_STEP_DEFAULT,
   };
 }
 async function setBurstConfig({ size, intervalMs, stepMs }) {
   const payload = {};
-  if (size != null)       payload[BURST_SIZE_KEY]     = Math.max(1, Math.min(50, Number(size)));
+  if (size != null) payload[BURST_SIZE_KEY] = Math.max(1, Math.min(50, Number(size)));
   if (intervalMs != null) payload[BURST_INTERVAL_KEY] = Math.max(500, Number(intervalMs));
-  if (stepMs != null)     payload[BURST_STEP_KEY]     = Math.max(200, Number(stepMs));
+  if (stepMs != null) payload[BURST_STEP_KEY] = Math.max(200, Number(stepMs));
   await chrome.storage.local.set(payload);
   return loadBurstConfig();
 }
@@ -200,7 +200,7 @@ function targetFromPlaceholder(rawUrl) {
       const tgt = u.searchParams.get("u");
       if (tgt) return tgt;
     }
-  } catch {}
+  } catch { }
   return null;
 }
 
@@ -240,9 +240,9 @@ async function broadcastUiLocale() {
   try {
     const tabs = await chrome.tabs.query({});
     for (const t of tabs) {
-      try { chrome.tabs.sendMessage(t.id, { type: "uiLocaleChanged", locale: loc }); } catch {}
+      try { chrome.tabs.sendMessage(t.id, { type: "uiLocaleChanged", locale: loc }); } catch { }
     }
-  } catch {}
+  } catch { }
 }
 //#endregion
 
@@ -267,7 +267,7 @@ async function ensureSingleGroup(windowId) {
       groupCache.set(windowId, hit.id);
       return hit.id;
     }
-  } catch {}
+  } catch { }
 
   return null; // vytvoří se při prvním seskupení
 }
@@ -286,7 +286,7 @@ async function groupTabIfPosts(tabId, windowId, targetUrl) {
       groupCache.set(windowId, gid);
       try {
         await chrome.tabGroups.update(gid, { title: GROUP_TITLE, color: GROUP_COLOR, collapsed: false });
-      } catch {}
+      } catch { }
     }
   } catch {
     return null;
@@ -304,7 +304,7 @@ async function groupTabToMainEnd(tabId, windowId) {
     if (gid == null) {
       gid = await chrome.tabs.group({ tabIds: tabId });
       groupCache.set(windowId, gid);
-      try { await chrome.tabGroups.update(gid, { title: GROUP_TITLE, color: GROUP_COLOR, collapsed: false }); } catch {}
+      try { await chrome.tabGroups.update(gid, { title: GROUP_TITLE, color: GROUP_COLOR, collapsed: false }); } catch { }
     } else {
       await chrome.tabs.group({ groupId: gid, tabIds: tabId });
     }
@@ -316,7 +316,7 @@ async function groupTabToMainEnd(tabId, windowId) {
         await chrome.tabs.move(tabId, { index: lastIndex + 1 });
         await chrome.tabs.group({ groupId: gid, tabIds: tabId });
       }
-    } catch {}
+    } catch { }
   } catch {
     return null;
   }
@@ -330,7 +330,7 @@ async function ensureUngrouped(tabId) {
     if (tab?.groupId && tab.groupId !== -1) {
       await chrome.tabs.ungroup([tabId]);
     }
-  } catch {}
+  } catch { }
 }
 //#endregion
 
@@ -340,7 +340,7 @@ function scheduleGroupSort(groupId, windowId) {
   if (groupId == null || groupId === -1) return;
 
   if (sortTimers.has(groupId)) clearTimeout(sortTimers.get(groupId));
-  const t = setTimeout(() => { sortGroupByTitle(groupId, windowId).catch(() => {}); }, 500);
+  const t = setTimeout(() => { sortGroupByTitle(groupId, windowId).catch(() => { }); }, 500);
   sortTimers.set(groupId, t);
 }
 
@@ -368,7 +368,7 @@ async function sortGroupByTitle(groupId, windowId) {
   const desired = [...postsTabs].sort((a, b) => mul * collator.compare(key(a), key(b)));
 
   for (let i = 0; i < desired.length; i++) {
-    try { await chrome.tabs.move(desired[i].id, { index: baseIndex + i }); } catch {}
+    try { await chrome.tabs.move(desired[i].id, { index: baseIndex + i }); } catch { }
   }
 }
 
@@ -385,72 +385,7 @@ async function resortAllWindows() {
 
 //#region SFW injekce (přepisovač odkazů e6*.net)
 async function injectSfwLinkRewriter(tabId) {
-  try {
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      world: "MAIN",
-      func: (SFW_QUERY_KEY, SFW_QUERY_VALUE) => {
-        const isE6Host = (host) => /^e6[\w-]*\.net$/i.test(host || "");
-
-        const tagLink = (a) => {
-          try {
-            const href = a.getAttribute("href");
-            if (!href) return;
-            const u = new URL(href, location.href);
-            if (!isE6Host(u.hostname)) return;
-
-            if (u.searchParams.get(SFW_QUERY_KEY) !== SFW_QUERY_VALUE) {
-              u.searchParams.set(SFW_QUERY_KEY, SFW_QUERY_VALUE);
-              // zachovej relativitu, pokud byla
-              if (/^https?:\/\//i.test(href)) {
-                a.setAttribute("href", u.toString());
-              } else {
-                a.setAttribute("href", u.pathname + u.search + u.hash);
-              }
-            }
-          } catch {}
-        };
-
-        const processAll = (root = document) => {
-          root.querySelectorAll("a[href]").forEach(tagLink);
-        };
-
-        // prvotní průchod
-        processAll(document);
-
-        // dynamika (SPA / endless scroll)
-        const mo = new MutationObserver((mutList) => {
-          for (const m of mutList) {
-            if (m.type === "childList") {
-              m.addedNodes.forEach((n) => {
-                if (n.nodeType === 1) {
-                  if (n.tagName === "A" && n.hasAttribute("href")) {
-                    tagLink(n);
-                  } else {
-                    processAll(n);
-                  }
-                }
-              });
-            } else if (m.type === "attributes"
-                       && m.target?.tagName === "A"
-                       && m.attributeName === "href") {
-              tagLink(m.target);
-            }
-          }
-        });
-        mo.observe(document.documentElement, {
-          childList: true,
-          subtree: true,
-          attributes: true,
-          attributeFilter: ["href"]
-        });
-
-        // případně web může respektovat i localStorage
-        try { localStorage.setItem(SFW_QUERY_KEY, SFW_QUERY_VALUE); } catch {}
-      },
-      args: [SFW_QUERY_KEY, SFW_QUERY_VALUE],
-    });
-  } catch {}
+  // Obsluženo čistě přes content script v manifest.json
 }
 //#endregion
 
@@ -458,25 +393,25 @@ async function injectSfwLinkRewriter(tabId) {
 chrome.i18n?.getAcceptLanguages?.((langs) => { acceptLangs = Array.isArray(langs) ? langs : []; });
 
 chrome.runtime.onInstalled.addListener(async () => {
-  await Promise.all([loadSortDir(), loadLocale()]).catch(() => {});
+  await Promise.all([loadSortDir(), loadLocale()]).catch(() => { });
   try {
     chrome.contextMenus.removeAll(() => {
       chrome.contextMenus.create({ id: "kd-sort-toggle", title: "Přepnout řazení skupiny e6 (A↔Z, 1↔9)", contexts: ["action", "page"] });
-      chrome.contextMenus.create({ id: "kd-sort-asc",    title: "Řadit A → Z (1→9)", contexts: ["action", "page"] });
-      chrome.contextMenus.create({ id: "kd-sort-desc",   title: "Řadit Z → A (9→1)", contexts: ["action", "page"] });
+      chrome.contextMenus.create({ id: "kd-sort-asc", title: "Řadit A → Z (1→9)", contexts: ["action", "page"] });
+      chrome.contextMenus.create({ id: "kd-sort-desc", title: "Řadit Z → A (9→1)", contexts: ["action", "page"] });
 
       chrome.contextMenus.create({ id: "kd-locale-header", title: "Jazyk (UI + řazení)", contexts: ["action", "page"], enabled: false });
-      chrome.contextMenus.create({ id: "kd-locale-auto",   title: "Auto (podle prohlížeče)", contexts: ["action", "page"] });
-      chrome.contextMenus.create({ id: "kd-locale-cs",     title: "Čeština", contexts: ["action", "page"] });
-      chrome.contextMenus.create({ id: "kd-locale-en",     title: "Angličtina", contexts: ["action", "page"] });
+      chrome.contextMenus.create({ id: "kd-locale-auto", title: "Auto (podle prohlížeče)", contexts: ["action", "page"] });
+      chrome.contextMenus.create({ id: "kd-locale-cs", title: "Čeština", contexts: ["action", "page"] });
+      chrome.contextMenus.create({ id: "kd-locale-en", title: "Angličtina", contexts: ["action", "page"] });
     });
-  } catch {}
+  } catch { }
 
-  try { await broadcastUiLocale(); } catch {}
+  try { await broadcastUiLocale(); } catch { }
 });
 
 chrome.runtime.onStartup?.addListener(async () => {
-  await loadLocale().catch(()=>{});
+  await loadLocale().catch(() => { });
   await broadcastUiLocale();
 });
 
@@ -489,12 +424,12 @@ chrome.contextMenus?.onClicked.addListener(async (info) => {
     const next = (sortDirCache === "asc") ? "desc" : "asc";
     await setSortDir(next); await resortAllWindows();
   }
-  if (info.menuItemId === "kd-sort-asc")  { await setSortDir("asc");  await resortAllWindows(); }
+  if (info.menuItemId === "kd-sort-asc") { await setSortDir("asc"); await resortAllWindows(); }
   if (info.menuItemId === "kd-sort-desc") { await setSortDir("desc"); await resortAllWindows(); }
 
   if (info.menuItemId === "kd-locale-auto") { await setLocale("auto"); await resortAllWindows(); }
-  if (info.menuItemId === "kd-locale-cs")   { await setLocale("cs");   await resortAllWindows(); }
-  if (info.menuItemId === "kd-locale-en")   { await setLocale("en");   await resortAllWindows(); }
+  if (info.menuItemId === "kd-locale-cs") { await setLocale("cs"); await resortAllWindows(); }
+  if (info.menuItemId === "kd-locale-en") { await setLocale("en"); await resortAllWindows(); }
 });
 
 chrome.action?.onClicked.addListener(async () => {
@@ -527,7 +462,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
       if (isE6Host(u.hostname) && (changeInfo.status === "complete" || changeInfo.url)) {
         await injectSfwLinkRewriter(tabId);
       }
-    } catch {}
+    } catch { }
 
     if (isPlaceholderUrl(current)) {
       await groupTabToMainEnd(tabId, winId);
@@ -550,8 +485,8 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     const raw = (changeInfo.url ?? "") || tab?.pendingUrl || tab?.url || "";
     const candidateUrl = targetFromPlaceholder(raw) || raw;
     const becamePostDetail = !!changeInfo.url && isPostDetail(candidateUrl);
-    const becameListing    = !!changeInfo.url && isPostsListing(candidateUrl);
-    const titleArrived     = !!changeInfo.title;
+    const becameListing = !!changeInfo.url && isPostsListing(candidateUrl);
+    const titleArrived = !!changeInfo.title;
 
     if (becameListing) {
       await ensureUngrouped(tabId);
@@ -568,7 +503,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
         if (set.delete(tabId) && set.size === 0) sessions.delete(openerId);
       }
     }
-  } catch {}
+  } catch { }
 });
 
 chrome.tabs.onCreated.addListener(async (tab) => {
@@ -583,7 +518,7 @@ chrome.tabs.onCreated.addListener(async (tab) => {
       if (isE6Host(u.hostname)) {
         await injectSfwLinkRewriter(tab.id);
       }
-    } catch {}
+    } catch { }
 
     if (isPlaceholderUrl(raw)) {
       await groupTabToMainEnd(tab.id, winId);
@@ -600,7 +535,7 @@ chrome.tabs.onCreated.addListener(async (tab) => {
 
     const gid = await groupTabIfPosts(tab.id, winId, target);
     scheduleGroupSort(gid ?? (tab.groupId ?? -1), winId);
-  } catch {}
+  } catch { }
 });
 
 chrome.tabs.onMoved.addListener(async (tabId) => {
@@ -610,16 +545,16 @@ chrome.tabs.onMoved.addListener(async (tabId) => {
       const gid = await ensureSingleGroup(tab.windowId);
       if (gid != null && gid === tab.groupId) scheduleGroupSort(gid, tab.windowId);
     }
-  } catch {}
+  } catch { }
 });
 
 chrome.tabs.onAttached.addListener(async (tabId, attachInfo) => {
   try {
     const tab = await chrome.tabs.get(tabId);
     if (tab?.groupId !== -1) scheduleGroupSort(tab.groupId, attachInfo.newWindowId);
-  } catch {}
+  } catch { }
 });
-chrome.tabs.onDetached.addListener(() => {});
+chrome.tabs.onDetached.addListener(() => { });
 
 if (chrome.tabGroups?.onUpdated) {
   chrome.tabGroups.onUpdated.addListener(async (group) => {
@@ -631,50 +566,64 @@ if (chrome.tabGroups?.onUpdated) {
 }
 //#endregion
 
-//#region SPA fallback injekce (webNavigation)
-(function setupWebNavigationFallback() {
-  if (!chrome.webNavigation) return;
-
-  const isE6Host = (h) => /^e6[\w-]*\.net$/i.test(h || "");
-  const wantsInject = (urlStr) => {
-    try {
-      const u = new URL(urlStr);
-      if (!isE6Host(u.hostname)) return false;
-      // injektujeme na všech e6 stránkách (zvlášť /posts a /posts/<id>)
-      return true;
-    } catch { return false; }
-  };
-
-  const safeInject = async (tabId) => {
-    try {
-      await chrome.scripting.executeScript({
-        target: { tabId, allFrames: true },
-        world: "MAIN",
-        files: ["content/sfw-link-rewriter.js"]
-      });
-    } catch { /* no-op */ }
-  };
-
-  // Při přechodu přes History API (SPA)
-  chrome.webNavigation.onHistoryStateUpdated.addListener(async (details) => {
-    if (details.tabId == null) return;
-    if (!wantsInject(details.url)) return;
-    await safeInject(details.tabId);
-  });
-
-  // Při potvrzené navigaci (top-level i subframes)
-  chrome.webNavigation.onCommitted.addListener(async (details) => {
-    if (details.tabId == null) return;
-    if (!wantsInject(details.url)) return;
-    await safeInject(details.tabId);
-  });
-})();
-//#endregion
+// SPA fallback removed. Content script handles everything.
 
 //#region Alarmy (burst + údržba)
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === MAINT_ALARM) {
     await resortAllWindows();
+    return;
+  }
+
+  const bb = /^burst_batch:(\d+)$/.exec(alarm.name);
+  if (bb) {
+    const openerId = parseInt(bb[1], 10);
+    const st = runState.get(openerId);
+    if (!st || st.kind !== "burst_batch") return;
+
+    let inBatch = 0;
+    while (inBatch < st.BATCH_SIZE && st.queue.length) {
+      const targetUrl = st.queue.shift();
+      const stProg = progressMap.get(openerId) || { total: st.total, created: 0, opened: 0 };
+      const ordinal = (stProg.created || 0) + 1;
+
+      const ph = new URL(PLACEHOLDER_URL);
+      ph.searchParams.set("u", String(targetUrl));
+      ph.searchParams.set("i", String(ordinal));
+      ph.searchParams.set("n", String(st.total));
+
+      const perDelay = st.stepMs * (inBatch + 1);
+      ph.searchParams.set("d", String(perDelay));
+
+      chrome.tabs.create(
+        { url: ph.href, active: false, openerTabId: openerId || undefined, windowId: st.windowId },
+        async (tab) => {
+          const err = chrome.runtime.lastError;
+          if (err || !tab?.id) return;
+          try { await chrome.tabs.update(tab.id, { autoDiscardable: true }); } catch { }
+          const alarmName = `burst:${tab.id}`;
+          chrome.alarms.create(alarmName, { when: Date.now() + perDelay });
+          try { await addMapping(tab.id, targetUrl, alarmName, openerId || undefined); } catch { }
+          const pendingSet = sessions.get(openerId) || new Set();
+          pendingSet.add(tab.id);
+          if (st.windowId != null) {
+            try { await groupTabToMainEnd(tab.id, st.windowId); } catch { }
+          }
+          const now = progressMap.get(openerId) || { total: st.total, created: 0, opened: 0 };
+          now.created = Math.min(now.total, (now.created || 0) + 1);
+          progressMap.set(openerId, now);
+          try { await chrome.tabs.sendMessage(openerId, { type: "burstProgress", total: now.total, created: now.created, opened: now.opened || 0 }); } catch { }
+        }
+      );
+      inBatch++;
+    }
+
+    if (st.queue.length) {
+      runState.set(openerId, st);
+      chrome.alarms.create(`burst_batch:${openerId}`, { when: Date.now() + st.BATCH_INTERVAL_MS });
+    } else {
+      runState.delete(openerId);
+    }
     return;
   }
 
@@ -686,10 +635,27 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     if (!st) return;
     if (st.paused) return;
 
+    // Throttle pokud se zrovna načítá 10+ E6 stránek
+    try {
+      const e6Tabs = await chrome.tabs.query({
+        url: ["*://*.e621.net/*", "*://*.e6ai.net/*", "*://e621.net/*", "*://e6ai.net/*"],
+        status: "loading"
+      });
+      if (e6Tabs.length >= 10) {
+        chrome.alarms.create(`seq:${openerId}`, { when: Date.now() + st.delayMs });
+        try {
+          await chrome.tabs.sendMessage(openerId, {
+            type: "seqProgress", total: st.total, opened: st.opened, left: st.queue.length, delayMs: st.delayMs, running: true, paused: false, waitingLoad: true
+          });
+        } catch { }
+        return;
+      }
+    } catch { }
+
     const nextUrl = st.queue.shift();
     if (!nextUrl) {
       runState.delete(openerId);
-      try { await chrome.tabs.sendMessage(openerId, { type: "seqDone", total: st.total, opened: st.opened }); } catch {}
+      try { await chrome.tabs.sendMessage(openerId, { type: "seqDone", total: st.total, opened: st.opened }); } catch { }
       return;
     }
 
@@ -708,9 +674,9 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
           } else {
             await groupTabToMainEnd(created.id, st.windowId);
           }
-          try { const u = new URL(nextUrl); if (isE6Host(u.hostname)) await injectSfwLinkRewriter(created.id); } catch {}
+          try { const u = new URL(nextUrl); if (isE6Host(u.hostname)) await injectSfwLinkRewriter(created.id); } catch { }
         }
-      } catch {}
+      } catch { }
 
       runState.set(openerId, st);
       try {
@@ -723,17 +689,17 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
           running: true,
           paused: false
         });
-      } catch {}
+      } catch { }
     } catch (e) {
-      try { await chrome.tabs.sendMessage(openerId, { type: "seqError", error: String(e && e.message ? e.message : e) }); } catch {}
+      try { await chrome.tabs.sendMessage(openerId, { type: "seqError", error: String(e && e.message ? e.message : e) }); } catch { }
     }
 
     // naplánuj další tick (one-shot alarm)
     if (st.queue.length) {
-      try { chrome.alarms.create(`seq:${openerId}`, { when: Date.now() + st.delayMs }); } catch {}
+      try { chrome.alarms.create(`seq:${openerId}`, { when: Date.now() + st.delayMs }); } catch { }
     } else {
       runState.delete(openerId);
-      try { await chrome.tabs.sendMessage(openerId, { type: "seqDone", total: st.total, opened: st.opened }); } catch {}
+      try { await chrome.tabs.sendMessage(openerId, { type: "seqDone", total: st.total, opened: st.opened }); } catch { }
     }
     return;
   }
@@ -746,7 +712,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (!entry) return;
 
   let ph = null;
-  try { ph = await chrome.tabs.get(phId); } catch {}
+  try { ph = await chrome.tabs.get(phId); } catch { }
 
   const openerId = entry.openerId || openerForPlaceholder(phId) || null;
 
@@ -756,9 +722,9 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
       if (st) {
         st.opened = Math.min(st.total, (st.opened || 0) + 1);
         progressMap.set(openerId, st);
-        try { await chrome.tabs.sendMessage(openerId, { type: "burstProgress", total: st.total, created: st.created || 0, opened: st.opened }); } catch {}
+        try { await chrome.tabs.sendMessage(openerId, { type: "burstProgress", total: st.total, created: st.created || 0, opened: st.opened }); } catch { }
         if (st.opened >= st.total) {
-          try { await chrome.tabs.sendMessage(openerId, { type: "burstDone", total: st.total }); } catch {}
+          try { await chrome.tabs.sendMessage(openerId, { type: "burstDone", total: st.total }); } catch { }
           progressMap.delete(openerId);
           sessions.delete(openerId);
           runState.delete(openerId);
@@ -774,22 +740,22 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
         const gid = await groupTabIfPosts(created.id, created.windowId, entry.url);
         scheduleGroupSort(gid ?? (created.groupId ?? -1), created.windowId);
       } else if (created?.id != null) {
-        try { const u = new URL(entry.url); if (isE6Host(u.hostname)) await injectSfwLinkRewriter(created.id); } catch {}
+        try { const u = new URL(entry.url); if (isE6Host(u.hostname)) await injectSfwLinkRewriter(created.id); } catch { }
       }
       await bumpOpened();
     } else if (ph.discarded || ph.status === "unloaded") {
       const created = await chrome.tabs.create({ url: entry.url, active: false, openerTabId: openerId || undefined });
-      try { await chrome.tabs.remove(phId); } catch {}
+      try { await chrome.tabs.remove(phId); } catch { }
       if (created?.id != null && created.windowId != null && isPostDetail(entry.url)) {
         const gid = await groupTabIfPosts(created.id, created.windowId, entry.url);
         scheduleGroupSort(gid ?? (created.groupId ?? -1), created.windowId);
       } else if (created?.id != null) {
-        try { const u = new URL(entry.url); if (isE6Host(u.hostname)) await injectSfwLinkRewriter(created.id); } catch {}
+        try { const u = new URL(entry.url); if (isE6Host(u.hostname)) await injectSfwLinkRewriter(created.id); } catch { }
       }
       await bumpOpened();
     } else {
       await chrome.tabs.update(phId, { url: entry.url });
-      try { const u = new URL(entry.url); if (isE6Host(u.hostname)) await injectSfwLinkRewriter(phId); } catch {}
+      try { const u = new URL(entry.url); if (isE6Host(u.hostname)) await injectSfwLinkRewriter(phId); } catch { }
       await bumpOpened();
     }
   } finally {
@@ -802,8 +768,9 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 async function stopBurstFor(openerId) {
   const st = runState.get(openerId);
   if (st?.timer) {
-    try { clearInterval(st.timer); } catch {}
+    try { clearInterval(st.timer); } catch { }
   }
+  try { chrome.alarms.clear(`burst_batch:${openerId}`); } catch { }
   runState.delete(openerId);
 
   // Zruš alarmy + zavři placeholdery napojené na tohoto openerId
@@ -812,15 +779,15 @@ async function stopBurstFor(openerId) {
   for (const [tabIdStr, entry] of Object.entries(map)) {
     if (entry?.openerId === openerId) {
       if (entry.alarmName) {
-        try { await chrome.alarms.clear(entry.alarmName); } catch {}
+        try { await chrome.alarms.clear(entry.alarmName); } catch { }
       }
       try {
         const tid = Number(tabIdStr);
-        const t = await chrome.tabs.get(tid).catch(()=>null);
+        const t = await chrome.tabs.get(tid).catch(() => null);
         if (t && isPlaceholderUrl(t.url || t.pendingUrl || "")) {
-          await chrome.tabs.remove(tid).catch(()=>{});
+          await chrome.tabs.remove(tid).catch(() => { });
         }
-      } catch {}
+      } catch { }
       toDelete.push(tabIdStr);
     }
   }
@@ -829,7 +796,7 @@ async function stopBurstFor(openerId) {
 
   sessions.delete(openerId);
   progressMap.delete(openerId);
-  try { await chrome.tabs.sendMessage(openerId, { type: "burstDone", total: 0 }); } catch {}
+  try { await chrome.tabs.sendMessage(openerId, { type: "burstDone", total: 0 }); } catch { }
 }
 //#endregion
 
@@ -884,8 +851,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             await groupTabToMainEnd(tab.id, winId);
           }
           // SFW injekce pro e6 host
-          try { const u = new URL(msg.url); if (isE6Host(u.hostname)) await injectSfwLinkRewriter(tab.id); } catch {}
-        } catch {}
+          try { const u = new URL(msg.url); if (isE6Host(u.hostname)) await injectSfwLinkRewriter(tab.id); } catch { }
+        } catch { }
       }
     });
     return true;
@@ -894,7 +861,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // --- SEQ OPEN (stabilní sekvenční otevírání přes chrome.alarms) ---
   if (msg.type === "seqOpenStart") {
     const openerId = sender?.tab?.id;
-    const winId    = sender?.tab?.windowId;
+    const winId = sender?.tab?.windowId;
 
     const urlsRaw = Array.isArray(msg.urls) ? msg.urls : [];
     const urls = [...new Set(urlsRaw)].filter(Boolean);
@@ -907,7 +874,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
 
     // pokud už něco běží, tak to nejdřív zastav
-    try { chrome.alarms.clear(`seq:${openerId}`); } catch {}
+    try { chrome.alarms.clear(`seq:${openerId}`); } catch { }
     runState.set(openerId, {
       kind: "seq",
       queue: urls.slice(0, hardCap),
@@ -918,10 +885,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       windowId: winId
     });
 
-    try { chrome.alarms.create(`seq:${openerId}`, { when: Date.now() + delayMs }); } catch {}
+    try { chrome.alarms.create(`seq:${openerId}`, { when: Date.now() + delayMs }); } catch { }
     try {
       chrome.tabs.sendMessage(openerId, { type: "seqProgress", total: hardCap, opened: 0, left: hardCap, delayMs, running: true, paused: false });
-    } catch {}
+    } catch { }
     sendResponse({ ok: true, total: hardCap, delayMs });
     return true;
   }
@@ -932,8 +899,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (!openerId || !st || st.kind !== "seq") { sendResponse({ ok: false, error: "No seq run." }); return true; }
     st.paused = true;
     runState.set(openerId, st);
-    try { chrome.alarms.clear(`seq:${openerId}`); } catch {}
-    try { chrome.tabs.sendMessage(openerId, { type: "seqProgress", total: st.total, opened: st.opened, left: st.queue.length, delayMs: st.delayMs, running: true, paused: true }); } catch {}
+    try { chrome.alarms.clear(`seq:${openerId}`); } catch { }
+    try { chrome.tabs.sendMessage(openerId, { type: "seqProgress", total: st.total, opened: st.opened, left: st.queue.length, delayMs: st.delayMs, running: true, paused: true }); } catch { }
     sendResponse({ ok: true });
     return true;
   }
@@ -944,8 +911,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (!openerId || !st || st.kind !== "seq") { sendResponse({ ok: false, error: "No seq run." }); return true; }
     st.paused = false;
     runState.set(openerId, st);
-    try { chrome.alarms.create(`seq:${openerId}`, { when: Date.now() + st.delayMs }); } catch {}
-    try { chrome.tabs.sendMessage(openerId, { type: "seqProgress", total: st.total, opened: st.opened, left: st.queue.length, delayMs: st.delayMs, running: true, paused: false }); } catch {}
+    try { chrome.alarms.create(`seq:${openerId}`, { when: Date.now() + st.delayMs }); } catch { }
+    try { chrome.tabs.sendMessage(openerId, { type: "seqProgress", total: st.total, opened: st.opened, left: st.queue.length, delayMs: st.delayMs, running: true, paused: false }); } catch { }
     sendResponse({ ok: true });
     return true;
   }
@@ -954,9 +921,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const openerId = sender?.tab?.id;
     const st = openerId != null ? runState.get(openerId) : null;
     if (!openerId || !st || st.kind !== "seq") { sendResponse({ ok: false, error: "No seq run." }); return true; }
-    try { chrome.alarms.clear(`seq:${openerId}`); } catch {}
+    try { chrome.alarms.clear(`seq:${openerId}`); } catch { }
     runState.delete(openerId);
-    try { chrome.tabs.sendMessage(openerId, { type: "seqStopped" }); } catch {}
+    try { chrome.tabs.sendMessage(openerId, { type: "seqStopped" }); } catch { }
     sendResponse({ ok: true });
     return true;
   }
@@ -964,17 +931,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // --- HROMADNÉ OTEVÍRÁNÍ (sekvenční režim odstraněn) ---
   if (msg.type === "burstOpen") {
     const openerId = sender?.tab?.id || null;
-    const winId    = sender?.tab?.windowId;
+    const winId = sender?.tab?.windowId;
 
-    const urlsRaw  = Array.isArray(msg.urls) ? msg.urls : [];
-    const urls     = [...new Set(urlsRaw)];
-    const hardCap  = Math.min(2000, urls.length);
+    const urlsRaw = Array.isArray(msg.urls) ? msg.urls : [];
+    const urls = [...new Set(urlsRaw)];
+    const hardCap = Math.min(2000, urls.length);
     if (hardCap === 0) { sendResponse({ ok: false, error: "Nothing to open." }); return true; }
 
     loadBurstConfig().then((cfg) => {
-      const stepMs            = Math.max(200, Number(msg.stepMs            ?? cfg.stepMs));
-      const BATCH_SIZE        = Math.max(1,  Math.min(50, Number(msg.batchSize        ?? cfg.size)));
-      const BATCH_INTERVAL_MS = Math.max(500,         Number(msg.batchIntervalMs ?? cfg.intervalMs));
+      const stepMs = Math.max(200, Number(msg.stepMs ?? cfg.stepMs));
+      const BATCH_SIZE = Math.max(1, Math.min(50, Number(msg.batchSize ?? cfg.size)));
+      const BATCH_INTERVAL_MS = Math.max(500, Number(msg.batchIntervalMs ?? cfg.intervalMs));
 
       const queue = urls.slice(0, hardCap);
       const total = queue.length;
@@ -983,71 +950,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sessions.set(openerId, pendingSet);
 
       progressMap.set(openerId, { total, created: 0, opened: 0 });
-      try { chrome.tabs.sendMessage(openerId, { type: "burstProgress", total, created: 0, opened: 0 }); } catch {}
+      try { chrome.tabs.sendMessage(openerId, { type: "burstProgress", total, created: 0, opened: 0 }); } catch { }
 
-      let timer = null;
-
-      const openOneBatch = () => {
-        if (!queue.length) {
-          if (timer) { clearInterval(timer); timer = null; }
-          runState.delete(openerId);
-          return;
-        }
-
-        let inBatch = 0;
-        while (inBatch < BATCH_SIZE && queue.length) {
-          const targetUrl = queue.shift();
-
-          const st = progressMap.get(openerId) || { total, created: 0, opened: 0 };
-          const ordinal = (st.created || 0) + 1;
-
-          const ph = new URL(PLACEHOLDER_URL);
-          ph.searchParams.set("u", String(targetUrl));
-          ph.searchParams.set("i", String(ordinal));
-          ph.searchParams.set("n", String(total));
-
-          const perDelay = stepMs * (inBatch + 1);
-          ph.searchParams.set("d", String(perDelay));
-
-          chrome.tabs.create(
-            { url: ph.href, active: false, openerTabId: openerId || undefined, windowId: winId },
-            async (tab) => {
-              const err = chrome.runtime.lastError;
-              if (err || !tab?.id) return;
-
-              try { await chrome.tabs.update(tab.id, { autoDiscardable: true }); } catch {}
-              const alarmName = `burst:${tab.id}`;
-              chrome.alarms.create(alarmName, { when: Date.now() + perDelay });
-
-              try { await addMapping(tab.id, targetUrl, alarmName, openerId || undefined); } catch {}
-              pendingSet.add(tab.id);
-
-              if (winId != null) {
-                try { await groupTabToMainEnd(tab.id, winId); } catch {}
-              }
-
-              const now = progressMap.get(openerId) || { total, created: 0, opened: 0 };
-              now.created = Math.min(now.total, (now.created || 0) + 1);
-              progressMap.set(openerId, now);
-              try { await chrome.tabs.sendMessage(openerId, { type: "burstProgress", total: now.total, created: now.created, opened: now.opened || 0 }); } catch {}
-            }
-          );
-
-        inBatch++;
-        }
-
-        runState.set(openerId, { timer, queueLeft: queue.length });
-
-        if (!queue.length && timer) {
-          clearInterval(timer);
-          runState.delete(openerId);
-          timer = null;
-        }
-      };
-
-      openOneBatch();
-      timer = setInterval(openOneBatch, BATCH_INTERVAL_MS);
-      runState.set(openerId, { timer, queueLeft: queue.length });
+      runState.set(openerId, {
+        kind: "burst_batch",
+        queue,
+        total,
+        stepMs,
+        BATCH_SIZE,
+        BATCH_INTERVAL_MS,
+        windowId: winId
+      });
+      // Spuštění první dávky ihned přes alarm
+      chrome.alarms.create(`burst_batch:${openerId}`, { when: Date.now() + 50 });
 
       sendResponse({
         ok: true,
@@ -1063,9 +978,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // STOP aktuálního běhu pro daný opener (tab, ze kterého se spouštělo)
   if (msg.type === "burstStop") {
     const openerId = sender?.tab?.id || null;
-    if (!openerId) { sendResponse({ ok:false, error:"no opener" }); return true; }
-    stopBurstFor(openerId).then(()=> sendResponse({ ok:true }))
-                          .catch(err => sendResponse({ ok:false, error:String(err) }));
+    if (!openerId) { sendResponse({ ok: false, error: "no opener" }); return true; }
+    stopBurstFor(openerId).then(() => sendResponse({ ok: true }))
+      .catch(err => sendResponse({ ok: false, error: String(err) }));
     return true;
   }
 
@@ -1138,7 +1053,7 @@ chrome.commands.onCommand.addListener(async (cmd) => {
 // --- Reakce na zprávu z content-scriptu (Shift+Y)
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg && msg.type === "toggle-group-from-page") {
-    toggleActiveGroup().then(() => sendResponse({ ok: true })).catch(err => sendResponse({ ok:false, err: String(err) }));
+    toggleActiveGroup().then(() => sendResponse({ ok: true })).catch(err => sendResponse({ ok: false, err: String(err) }));
     return true; // async sendResponse
   }
 });
@@ -1191,7 +1106,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg && msg.type === "toggle-group-from-page") {
     toggleNamedGroup()
       .then(ok => sendResponse({ ok }))
-      .catch(err => sendResponse({ ok:false, err: String(err) }));
+      .catch(err => sendResponse({ ok: false, err: String(err) }));
     return true; // async response
   }
 });

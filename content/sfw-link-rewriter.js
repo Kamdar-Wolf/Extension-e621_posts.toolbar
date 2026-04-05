@@ -2,6 +2,9 @@
 // Přidá ?sfw=1 ke všem odkazům na e6*.net (včetně dynamiky). Běží už na document_start.
 
 (() => {
+  if (window.__kd_sfwLinkRewriterBound) return;
+  window.__kd_sfwLinkRewriterBound = true;
+
   const SFW_QUERY_KEY = "sfw";
   const SFW_QUERY_VALUE = "1";
   const isE6Host = (host) => /^e6[\w-]*\.net$/i.test(host || "");

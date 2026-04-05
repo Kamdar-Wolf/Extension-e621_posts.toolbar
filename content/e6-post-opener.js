@@ -1,12 +1,10 @@
-(() => {
+(async () => {
   'use strict';
 
-  // ===== GM shim (storage + downloads + tabs) =====
-  const __cache = Object.create(null);
-  let __ready = false, __wait = [];
-  chrome.storage.local.get(null, items => { Object.assign(__cache, items||{}); __ready=true; __wait.splice(0).forEach(fn=>{try{fn();}catch{}}); });
-  const __onReady = fn => (__ready ? fn() : __wait.push(fn));
+  if (!/^\/posts(\/|\?|$)/.test(location.pathname)) return;
+  if (!document.querySelector('article.thumbnail')) return;
 
+  const __cache = await chrome.storage.local.get(null) || {};
   function GM_getValue(k, d=null){ return (k in __cache) ? __cache[k] : d; }
   function GM_setValue(k, v){ __cache[k]=v; try{ chrome.storage.local.set({[k]:v}); }catch{} }
   function GM_addValueChangeListener(k, cb){
@@ -17,6 +15,7 @@
     try{ chrome.runtime.sendMessage({type:'openInBackground', url, options:opts||{}}, ()=>{}); }
     catch{ try{ window.open(url,'_blank','noopener'); }catch{} }
   }
+
   function GM_download(opts){
     const { url, name, onload, onerror } = (typeof opts==='string') ? {url:opts} : opts;
     chrome.runtime.sendMessage({ type:'download', url, filename:name }, (res)=>{
@@ -26,10 +25,6 @@
       onload && onload(res);
     });
   }
-
-  __onReady(function init(){
-    if (!/^\/posts(\/|\?|$)/.test(location.pathname)) return;
-    if (!document.querySelector('article.thumbnail')) return;
 
     // ---------- KONSTANTY/UI ----------
     const SELECTOR_CARD = 'article.thumbnail';
@@ -869,10 +864,18 @@ if (!window.__kd_sfwHotkeyBound) {
           paused = pausedNow;
           idx = Math.min(opened, urls.length);
 
-          el.toggle.textContent = paused ? TXT[lang].resume : TXT[lang].pause;
-          el.note.textContent = paused ? TXT[lang].paused : TXT[lang].running;
-          updateBar();
-          publishLocalStatus(paused ? TXT[lang].paused : TXT[lang].running);
+          if (msg.waitingLoad) {
+            el.toggle.textContent = TXT[lang].pause;
+            const waitMsg = lang === 'cs' ? 'Čeká se na načtení...' : 'Waiting for loads...';
+            el.note.textContent = waitMsg;
+            updateBar();
+            publishLocalStatus(waitMsg);
+          } else {
+            el.toggle.textContent = paused ? TXT[lang].resume : TXT[lang].pause;
+            el.note.textContent = paused ? TXT[lang].paused : TXT[lang].running;
+            updateBar();
+            publishLocalStatus(paused ? TXT[lang].paused : TXT[lang].running);
+          }
         }
 
         if (msg.type === 'seqDone') {
@@ -891,6 +894,6 @@ if (!window.__kd_sfwHotkeyBound) {
     } catch {}
 
     updateBar();
+    updateBar();
     applyLangTexts();
-  });
 })();
